@@ -1,0 +1,77 @@
+[gd_scene load_steps=3 format=3 uid="uid://duvsvsvu8biwm"]
+
+[ext_resource type="Script" path="res://Scenes/ui/mainMenu/main_menu.gd" id="1_lnqmy"]
+[ext_resource type="Texture2D" uid="uid://didi8ffqykvkh" path="res://Assets/menu/bg.png" id="2_jl1fa"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_lnqmy")
+
+[node name="TextureRect" type="TextureRect" parent="."]
+texture_filter = 1
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("2_jl1fa")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="Title" type="Label" parent="."]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 36.0
+offset_right = 640.0
+offset_bottom = 100.0
+theme_override_font_sizes/font_size = 48
+text = "TOWER DEFENSE"
+
+[node name="MenuButtons" type="PanelContainer" parent="."]
+custom_minimum_size = Vector2(220, 220)
+layout_mode = 1
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -110.0
+offset_right = -40.0
+offset_bottom = 110.0
+grow_horizontal = 0
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MenuButtons"]
+layout_mode = 2
+
+[node name="startButton" type="Button" parent="MenuButtons/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "Mulai"
+
+[node name="settingsButton" type="Button" parent="MenuButtons/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "Pengaturan"
+
+[node name="creditsButton" type="Button" parent="MenuButtons/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "Kredit"
+
+[node name="quitButton" type="Button" parent="MenuButtons/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "Keluar"
+
+[connection signal="pressed" from="MenuButtons/VBoxContainer/startButton" to="." method="_on_start_button_pressed"]
+[connection signal="pressed" from="MenuButtons/VBoxContainer/settingsButton" to="." method="_on_settings_button_pressed"]
+[connection signal="pressed" from="MenuButtons/VBoxContainer/creditsButton" to="." method="_on_credits_button_pressed"]
+[connection signal="pressed" from="MenuButtons/VBoxContainer/quitButton" to="." method="_on_quit_button_pressed"]

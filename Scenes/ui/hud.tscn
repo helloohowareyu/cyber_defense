@@ -1,0 +1,107 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Scenes/ui/hud.gd" id="1_hud"]
+[ext_resource type="Script" path="res://Scenes/ui/turretUI/turrets_panel.gd" id="2_turret_panel"]
+
+[node name="HUD" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_hud")
+
+[node name="TopLeft" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 360.0
+offset_bottom = 180.0
+
+[node name="LevelLabel" type="Label" parent="TopLeft"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Level"
+
+[node name="GoldLabel" type="Label" parent="TopLeft"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Emas: 0"
+
+[node name="HPLabel" type="Label" parent="TopLeft"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "HP: 20/20"
+
+[node name="WaveLabel" type="Label" parent="TopLeft"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Gelombang: 0"
+
+[node name="RemainLabel" type="Label" parent="TopLeft"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Musuh: 0"
+
+[node name="PauseButton" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -120.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = 56.0
+grow_horizontal = 0
+text = "Jeda"
+
+[node name="BossPanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(360, 56)
+layout_mode = 0
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -180.0
+offset_top = 16.0
+offset_right = 180.0
+offset_bottom = 72.0
+grow_horizontal = 2
+
+[node name="VBox" type="VBoxContainer" parent="BossPanel"]
+layout_mode = 2
+
+[node name="BossName" type="Label" parent="BossPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Raja Dino"
+horizontal_alignment = 1
+
+[node name="BossBar" type="ProgressBar" parent="BossPanel/VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 14)
+layout_mode = 2
+show_percentage = false
+
+[node name="TurretsPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -76.0
+grow_horizontal = 2
+grow_vertical = 0
+script = ExtResource("2_turret_panel")
+
+[node name="Turrets" type="HBoxContainer" parent="TurretsPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="WaveWaitTimer" type="Timer" parent="."]
+wait_time = 1.0
+
+[connection signal="timeout" from="WaveWaitTimer" to="." method="_on_wave_wait_timer_timeout"]

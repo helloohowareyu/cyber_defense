@@ -1,0 +1,39 @@
+# Godot cache and generated files
+.godot/
+*.import
+*.uid
+export.cfg
+export_presets.cfg
+*.translation
+
+# Art, audio, fonts, textures, and other redistributable assets
+Assets/
+icon.svg
+
+# Legacy scenes not used by the current game flow
+Scenes/ui/gameOver/
+Scenes/ui/mapCompleted/
+
+# Build output and logs
+build/
+dist/
+.cache/
+node_modules/
+*.log
+*.tmp
+*.exe
+*.dll
+
+# Secrets and environment files
+.env
+.env.*
+*.pem
+*.key
+*.jks
+*.keystore
+google-services.json
+firebase*.json
+
+# IDE files
+.idea/
+.vscode/
