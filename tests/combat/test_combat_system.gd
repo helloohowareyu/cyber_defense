@@ -31,6 +31,7 @@ func _run_all_tests() -> void:
 	_run_task5_shader_load_tests()
 	_run_task6_tower_and_projectile_tests()
 	_run_task7_sandbox_load_test()
+	_run_task8_e2e_tests()
 	print("==========================================")
 	print("HASIL TEST COMBAT SYSTEM: %d PASS, %d FAIL" % [_passed, _failed])
 	print("==========================================")
@@ -270,3 +271,12 @@ func _run_task6_tower_and_projectile_tests() -> void:
 func _run_task7_sandbox_load_test() -> void:
 	var scene: PackedScene = load("res://src/combat/sandbox/combat_sandbox.tscn")
 	_assert_true(scene != null and scene.can_instantiate(), "Task7: combat_sandbox.tscn valid & siap dijalankan")
+
+
+## [FUNGSI]: Test Task 8 (menjalankan suite E2E Tiers 1-4 Game 3D Standalone).
+## [INPUT/OUTPUT]: - -> void
+func _run_task8_e2e_tests() -> void:
+	print("--- MENJALANKAN TASK 8: E2E CYBER DEFENSE 3D TIERS 1-4 ---")
+	var res: Dictionary = Game3DE2ETests.run_all(self)
+	_passed += int(res.get("pass", 0))
+	_failed += int(res.get("fail", 0))

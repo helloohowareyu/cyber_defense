@@ -62,8 +62,13 @@ src/combat/
 ├── shaders/      -> 3 custom shader .gdshader (blending, UV scroll, Blinn-Phong)
 ├── projectiles/  -> projectile_3d.gd (peluru 3D & ledakan AoE)
 ├── towers/       -> tower_3d.gd (logika utama menara & klik mouse)
-└── sandbox/      -> mock_enemy_3d.gd & combat_sandbox.tscn (arena uji 3D mandiri)
+├── sandbox/      -> mock_enemy_3d.gd & combat_sandbox.tscn (arena uji 3D mandiri)
+├── tools/        -> asset_generator.gd (generator placeholder audio/sprite/resource)
+└── game_3d/      -> cyber_defense_3d.tscn (Game 3D Komplit Mandiri: MapGrid3D, EnergyCore3D,
+                     Enemy3D, WaveSpawner3D, EconomyManager3D, SaveManager3D, AudioBridge3D,
+                     VFXManager3D, MainMenu3D, GameplayHud3D, TowerRadialMenu3D, Overlays3D)
 
 tests/combat/
-└── test_combat_system.gd -> 52 pengujian otomatis (headless)
+├── test_combat_system.gd -> Runner utama (52 unit test combat + 207 E2E test = 259 PASS)
+└── test_game_3d_e2e.gd   -> Suite pengujian end-to-end Game 3D Komplit
 ```

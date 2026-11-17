@@ -8,7 +8,7 @@
 
 ## 1. Apa yang Sudah Selesai Dikerjakan (Siap Pakai)
 
-Seluruh modul **Tower & Combat 3D** sudah selesai dibangun secara terisolasi di dalam `res://src/combat/` dan telah lulus **52/52 unit & integration test** (`res://tests/combat/test_combat_system.gd`):
+Seluruh modul **Tower & Combat 3D** serta **Game 3D Komplit Mandiri** sudah selesai dibangun secara terisolasi di dalam `res://src/combat/` (tanpa menyentuh file 2D di `res://Scenes/` maupun `project.godot`) dan telah lulus **259/259 unit, integration, & E2E test** (`res://tests/combat/test_combat_system.gd`):
 
 1. **Matematika Combat & Grafika 3D ([`CombatMath`](../src/combat/math/combat_math.gd)):**
    - Jarak Euclidean 3D, konversi skala GDD ke meter (`UNIT_SCALE = 0.1`), scaling damage (`+25%/lv`) & range (`+10%/lv`) Lv.1–3, flat armor reduction (`max(1.0, dmg - armor)`), scaling HP enemy per wave (`1.25^(N-1)`), biaya upgrade (`ceil(base * 1.5^L)`), refund sell (`floor(invested * 0.7)`), dan rotasi matriks `Basis` turret.
@@ -23,6 +23,9 @@ Seluruh modul **Tower & Combat 3D** sudah selesai dibangun secara terisolasi di 
    - `ArrayMesh` VAO/VBO untuk cincin jangkauan menara (`Range Ring`) & piringan shockwave AoE, `ImmediateMesh` untuk sinar `Laser Tower`, serta 3 shader `.gdshader` (*Alpha Blending*, *UV Scroll + Additive Blending*, dan *Blinn-Phong + Fresnel*).
 6. **Sandbox Pengujian Mandiri ([`combat_sandbox.tscn`](../src/combat/sandbox/combat_sandbox.tscn)):**
    - Scene 3D mandiri berisi 4 Tower aktif + spawner `MockEnemy3D` yang sudah bisa langsung dijalankan di Godot 4.7.2 (**F6**).
+7. **Game 3D Komplit Mandiri ([`cyber_defense_3d.tscn`](../src/combat/game_3d/cyber_defense_3d.tscn)) & Generator Aset ([`asset_generator.gd`](../src/combat/tools/asset_generator.gd)):**
+   - Arena taktis 3D 16×10 lengkap dengan Energy Core, 4 varian Enemy 3D prosedural (*Goblin, Orc, Harpy, Boss Demon King*), Wave Spawner 5 gelombang, Economy Manager, Save Manager (`user://cyber_defense_3d_save.cfg`), Audio Bridge, VFX Manager, serta antarmuka Container penuh (Main Menu, Gameplay HUD + Buy Bar, Tower Radial Menu, dan Overlays Pause/Settings/How-to-Play/Victory/Game Over).
+   - Tool `asset_generator.gd` untuk menghasilkan placeholder `.wav`, `.png`, dan `.tres` otomatis pada folder `res://Assets/` yang di-gitignore.
 
 ---
 
