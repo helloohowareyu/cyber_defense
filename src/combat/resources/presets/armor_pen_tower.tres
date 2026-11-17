@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="TowerStatsData" format=3]
+
+[ext_resource type="Script" path="res://src/combat/resources/tower_stats_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+tower_type = 3
+display_name = "Armor Pen Tower"
+base_damage = 25.0
+base_range_gdd = 140.0
+fire_rate_sec = 1.0
+base_cost = 175
+aoe_radius_gdd = 0.0
+slow_ratio = 0.0
+slow_duration_sec = 0.0
+ignores_armor = true
+accent_color = Color(0.95, 0.2, 0.3, 1)
