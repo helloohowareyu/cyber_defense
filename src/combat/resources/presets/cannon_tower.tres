@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="TowerStatsData" format=3]
+
+[ext_resource type="Script" path="res://src/combat/resources/tower_stats_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+tower_type = 1
+display_name = "Cannon Tower"
+base_damage = 40.0
+base_range_gdd = 120.0
+fire_rate_sec = 1.5
+base_cost = 150
+aoe_radius_gdd = 35.0
+slow_ratio = 0.0
+slow_duration_sec = 0.0
+ignores_armor = false
+accent_color = Color(1, 0.65, 0.15, 1)
