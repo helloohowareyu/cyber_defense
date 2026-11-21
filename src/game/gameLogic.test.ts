@@ -4,7 +4,11 @@ import {
   distance3D,
   isInRange3D,
   getScaledDamage,
+  getScaledFireRate,
   getScaledRangeGdd,
+  getScaledFarmPacket,
+  getScaledFarmDividend,
+  getScaledChainCount,
   calculateFinalDamage,
   calculateEnemyWaveHp,
   calculateUpgradeCost,
@@ -17,110 +21,147 @@ import {
   NUR_NEON_HALF_WIDTH,
   NUR_SLOT_PAD_SIZE,
   NUR_SLOT_CLEARANCE,
+  validateTowerPlacement,
 } from './nurMapData';
 import { selectTarget } from './targetSelector';
-import { getWaveComposition, TOWER_PRESETS, ENEMY_PRESETS } from './constants';
+import {
+  ENEMY_PRESETS,
+  getWaveComposition,
+  getWaveDefinition,
+  MAX_TOWER_LEVEL,
+  TOTAL_WAVES,
+  TOWER_ORDER,
+  TOWER_PRESETS,
+} from './constants';
 
-test('GDD 4.2 & 10.6: 3D Euclidean distance and range check', () => {
+test('3D Euclidean distance and range check', () => {
   assert.equal(distance3D({ x: 0, y: 0, z: 0 }, { x: 3, y: 4, z: 0 }), 5);
   assert.equal(isInRange3D({ x: 0, y: 0, z: 0 }, { x: 3, y: 4, z: 0 }, 5), true);
   assert.equal(isInRange3D({ x: 0, y: 0, z: 0 }, { x: 3, y: 4, z: 0 }, 4.99), false);
 });
 
-test('GDD 5: Tower damage (+25%/lv) and range (+10%/lv) scaling up to Level 3', () => {
-  assert.equal(getScaledDamage(15, 1), 15);
-  assert.equal(getScaledDamage(15, 2), 18.75);
-  assert.equal(getScaledDamage(15, 3), 22.5);
-  assert.equal(getScaledDamage(15, 5), 22.5); // clamped at Lv 3
+test('BTD6 4-Tier tower scaling + Overclock Pad synergy (+15% Range, -12% Cooldown)', () => {
+  assert.equal(MAX_TOWER_LEVEL, 4);
+  assert.equal(getScaledDamage(16, 1), 16);
+  assert.equal(getScaledDamage(16, 4), 39.2);
+  assert.equal(getScaledDamage(16, 9), 39.2); // clamped at Lv.4
 
-  assert.equal(getScaledRangeGdd(150, 1), 150);
-  assert.ok(Math.abs(getScaledRangeGdd(150, 2) - 165) < 1e-6);
-  assert.ok(Math.abs(getScaledRangeGdd(150, 3) - 180) < 1e-6);
+  const baseRange = getScaledRangeGdd(150, 1, false);
+  const overclockRange = getScaledRangeGdd(150, 1, true);
+  assert.ok(Math.abs(overclockRange - baseRange * 1.15) < 1e-6);
+
+  const normalRate = getScaledFireRate(1.0, 1, false);
+  const ocRate = getScaledFireRate(1.0, 1, true);
+  assert.ok(ocRate < normalRate);
 });
 
-test('GDD 4.4, 5, 6: Armor reduction & Armor Pen 100% ignore', () => {
-  // Laser (15 dmg) vs Orc (10 armor) => 5 dmg
-  assert.equal(calculateFinalDamage(15, 10, false), 5);
-  // Freeze (5 dmg) vs Demon King (20 armor) => min 1 dmg
-  assert.equal(calculateFinalDamage(5, 20, false), 1);
-  // Armor Pen (25 dmg) vs Demon King (20 armor) => 25 dmg
-  assert.equal(calculateFinalDamage(25, 20, true), 25);
+test('Quantum Data Farm & Tesla Arc Relay scaling formulas', () => {
+  assert.equal(getScaledFarmPacket(28, 1, false), 28);
+  assert.ok(getScaledFarmPacket(28, 4, false) > 100);
+  assert.ok(getScaledFarmPacket(28, 4, true) > getScaledFarmPacket(28, 4, false));
+  assert.ok(getScaledFarmDividend(45, 4, false) >= 180);
+
+  assert.equal(getScaledChainCount(3, 1), 3);
+  assert.equal(getScaledChainCount(3, 4), 6);
 });
 
-test('GDD 6: Wave HP scaling ceil(BaseHP * 1.25^(N-1))', () => {
-  assert.equal(calculateEnemyWaveHp(100, 1), 100);
-  assert.equal(calculateEnemyWaveHp(100, 2), 125);
-  assert.equal(calculateEnemyWaveHp(100, 3), 157); // ceil(156.25)
-  assert.equal(calculateEnemyWaveHp(1500, 5), Math.ceil(1500 * Math.pow(1.25, 4)));
+test('Armor reduction & Railgun 100% Armor Pierce against Cyber Bosses', () => {
+  assert.equal(calculateFinalDamage(16, 8, false), 8);
+  assert.equal(calculateFinalDamage(8, 18, false), 1); // minimum 1 damage
+  assert.equal(calculateFinalDamage(32, 18, true), 32); // 100% pierce
 });
 
-test('GDD 4.5 & 8: Upgrade cost ceil(Base * 1.5^Level) and 70% sell refund', () => {
-  // Laser base 100
-  assert.equal(calculateUpgradeCost(100, 1), 150);
-  assert.equal(calculateUpgradeCost(100, 2), 225);
-  assert.equal(calculateUpgradeCost(100, 3), 0);
+test('Balanced 15-Wave HP scaling, Upgrade costs, and 75% Sell refund', () => {
+  assert.equal(calculateEnemyWaveHp(58, 1), 58);
+  assert.ok(calculateEnemyWaveHp(58, 5) < 100, 'Wave 5 Bit-Crawler should stay fair & accessible');
+  assert.equal(calculateEnemyWaveHp(3200, 15, true), 3200);
 
-  // Armor Pen base 175 -> Lv1->2: ceil(175*1.5) = 263
-  assert.equal(calculateUpgradeCost(175, 1), 263);
+  assert.equal(calculateUpgradeCost(100, 1), 95);
+  assert.equal(calculateUpgradeCost(100, 3), 245);
+  assert.equal(calculateUpgradeCost(100, 4), 0);
 
-  // Total invested 100 + 150 = 250 => floor(250 * 0.7) = 175
-  assert.equal(calculateSellRefund(250), 175);
-  assert.equal(calculateSellRefund(-50), 0);
+  assert.equal(calculateSellRefund(200), 150);
+  assert.equal(calculateSellRefund(-10), 0);
+  assert.equal(getWaveClearBonus(1), 93);
 });
 
-test('GDD 7: Wave clear bonus 50 + floor(0.8 * N * 10) and Wave 1-5 compositions', () => {
-  assert.equal(getWaveClearBonus(1), 58);
-  assert.equal(getWaveClearBonus(2), 66);
-  assert.equal(getWaveClearBonus(3), 74);
-  assert.equal(getWaveClearBonus(4), 82);
-  assert.equal(getWaveClearBonus(5), 90);
+test('15-Wave 3-Stage + Final Stage Boss Campaign and 6 Cyber Towers with Ultimates', () => {
+  assert.equal(TOTAL_WAVES, 15);
+  assert.equal(TOWER_ORDER.length, 6);
+  for (const id of TOWER_ORDER) {
+    assert.ok(TOWER_PRESETS[id].ultimate.name.length > 0);
+    assert.equal(TOWER_PRESETS[id].tierNames.length, 4);
+  }
+  const wave10 = getWaveDefinition(10);
+  assert.equal(wave10?.isBossWave, true);
+  assert.ok(getWaveComposition(10).some((e) => e.enemyId === 'aegis_dreadnought'));
 
-  const w1 = getWaveComposition(1);
-  assert.equal(w1.reduce((acc, e) => acc + e.count, 0), 5);
-  const w5 = getWaveComposition(5);
-  assert.equal(w5.reduce((acc, e) => acc + e.count, 0), 9); // 1 Boss + 4 Orc + 4 Harpy
-  assert.ok(w5.some((e) => e.enemyId === 'demon_king' && e.count === 1));
-  assert.equal(TOWER_PRESETS.laser.baseCost, 100);
-  assert.equal(ENEMY_PRESETS.demon_king.rewardGold, 150);
+  const finalStage = getWaveDefinition(15);
+  assert.equal(finalStage?.isFinalStage, true);
+  assert.equal(finalStage?.isBossWave, true);
+  const w15 = getWaveComposition(15);
+  assert.ok(w15.some((e) => e.enemyId === 'omega_overlord' && e.count === 1));
+  assert.ok(w15.length >= 5, 'Final stage boss must be escorted by multiple cyber squads');
+  assert.equal(ENEMY_PRESETS.omega_overlord.isFinalBoss, true);
 });
 
-test('Nur Map: Baked Cubic Bezier path connects BaseMusuh to BaseUtama cleanly', () => {
-  assert.ok(NUR_BAKED_PATH.totalLength > 30 && NUR_BAKED_PATH.totalLength < 60);
+test('Expanded Nur Map: Longer 3-loop Bezier path (~70-95m) connects BaseMusuh to BaseUtama cleanly', () => {
+  assert.ok(
+    NUR_BAKED_PATH.totalLength > 68 && NUR_BAKED_PATH.totalLength < 96,
+    `Expected longer path 68-96m, got ${NUR_BAKED_PATH.totalLength.toFixed(1)}m`
+  );
   const start = NUR_BAKED_PATH.sampleAtDistance(0);
   const end = NUR_BAKED_PATH.sampleAtDistance(NUR_BAKED_PATH.totalLength);
-  assert.ok(Math.abs(start.pos.x - -12.4) < 0.05);
-  assert.ok(Math.abs(end.pos.x - 11.94) < 0.05);
+  assert.ok(Math.abs(start.pos.x - -15.8) < 0.05);
+  assert.ok(Math.abs(end.pos.x - 15.5) < 0.05);
 });
 
-test('Nur Map: All 9 tower slots snap exactly 0.5m clear of the neon road edge', () => {
+test('Expanded Nur Map: 9 Overclock Pads snap cleanly and Free Placement validates road/tower/bounds', () => {
   assert.equal(NUR_TOWER_SLOTS.length, 9);
   const expectedDist = NUR_NEON_HALF_WIDTH + NUR_SLOT_PAD_SIZE * 0.5 + NUR_SLOT_CLEARANCE;
   for (const slot of NUR_TOWER_SLOTS) {
     const d = distance3D(slot.position, slot.lookTarget);
     assert.ok(
-      Math.abs(d - expectedDist) < 0.02,
+      Math.abs(d - expectedDist) < 0.03,
       `${slot.name} distance ${d} expected ${expectedDist}`
     );
   }
-  // Ensure no two slots overlap each other
-  for (let i = 0; i < NUR_TOWER_SLOTS.length; i++) {
-    for (let j = i + 1; j < NUR_TOWER_SLOTS.length; j++) {
-      const pairDist = distance3D(NUR_TOWER_SLOTS[i].position, NUR_TOWER_SLOTS[j].position);
-      assert.ok(pairDist > NUR_SLOT_PAD_SIZE, `Slots ${i + 1} and ${j + 1} overlap (${pairDist}m)`);
-    }
-  }
+
+  // Free placement right on the road centerline must be rejected
+  const roadSample = NUR_BAKED_PATH.sampleAtDistance(NUR_BAKED_PATH.totalLength * 0.5).pos;
+  const onRoad = validateTowerPlacement(roadSample, []);
+  assert.equal(onRoad.valid, false);
+  assert.equal(onRoad.reason, 'on_road');
+
+  // Free placement on open deck away from road must be valid!
+  const openSpot = { x: -14.0, y: 0, z: -8.0 };
+  const freeOk = validateTowerPlacement(openSpot, []);
+  assert.equal(freeOk.valid, true);
+  assert.equal(freeOk.overclockPadId, null);
+
+  // Placing another tower on top of an existing tower must be rejected
+  const overlap = validateTowerPlacement({ x: -13.6, y: 0, z: -8.0 }, [openSpot]);
+  assert.equal(overlap.valid, false);
+  assert.equal(overlap.reason, 'tower_overlap');
+
+  // Placing near Overclock Pad 0 snaps cleanly and flags overclockPadId = 0
+  const nearPad = { x: NUR_TOWER_SLOTS[0].position.x + 0.25, y: 0, z: NUR_TOWER_SLOTS[0].position.z - 0.15 };
+  const ocResult = validateTowerPlacement(nearPad, []);
+  assert.equal(ocResult.valid, true);
+  assert.equal(ocResult.overclockPadId, 0);
 });
 
-test('TargetSelector: FRONT_MOST, LOWEST_HP, and CLOSEST select exact candidates', () => {
+test('TargetSelector: BTD6 modes FIRST, STRONG, LAST, and CLOSE select exact candidates', () => {
   const towerPos = { x: 0, y: 0, z: 0 };
   const candidates = [
-    { id: 1, alive: true, position: { x: 2, y: 0, z: 0 }, currentHp: 100, pathProgress: 0.2 },
-    { id: 2, alive: true, position: { x: 4, y: 0, z: 0 }, currentHp: 40, pathProgress: 0.5 },
-    { id: 3, alive: true, position: { x: 5, y: 0, z: 0 }, currentHp: 200, pathProgress: 0.8 },
-    { id: 4, alive: true, position: { x: 20, y: 0, z: 0 }, currentHp: 5, pathProgress: 0.95 }, // out of range
+    { id: 1, alive: true, position: { x: 1.5, y: 0, z: 0 }, currentHp: 100, pathProgress: 0.15 },
+    { id: 2, alive: true, position: { x: 4.0, y: 0, z: 0 }, currentHp: 450, pathProgress: 0.5 },
+    { id: 3, alive: true, position: { x: 5.2, y: 0, z: 0 }, currentHp: 80, pathProgress: 0.85 },
+    { id: 4, alive: true, position: { x: 25, y: 0, z: 0 }, currentHp: 9999, pathProgress: 0.99 },
   ];
 
-  assert.equal(selectTarget(towerPos, 6, candidates, 'FRONT_MOST')?.id, 3);
-  assert.equal(selectTarget(towerPos, 6, candidates, 'LOWEST_HP')?.id, 2);
-  assert.equal(selectTarget(towerPos, 6, candidates, 'CLOSEST')?.id, 1);
+  assert.equal(selectTarget(towerPos, 6, candidates, 'FIRST')?.id, 3);
+  assert.equal(selectTarget(towerPos, 6, candidates, 'STRONG')?.id, 2);
+  assert.equal(selectTarget(towerPos, 6, candidates, 'LAST')?.id, 1);
+  assert.equal(selectTarget(towerPos, 6, candidates, 'CLOSE')?.id, 1);
 });

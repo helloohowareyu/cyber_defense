@@ -1,4 +1,4 @@
-// Offline local persistence matching GDD Section 12 (SaveManager3D)
+// Offline local persistence (SaveData with independent SFX & Music preferences)
 
 export interface SaveData {
   highScore: number;
@@ -7,9 +7,10 @@ export interface SaveData {
   wins: number;
   volume: number; // 0..1
   muted: boolean;
+  musicMuted: boolean;
 }
 
-const STORAGE_KEY = 'cyber_defense_3d_save_v1';
+const STORAGE_KEY = 'cyber_defense_3d_save_v2';
 
 const DEFAULT_SAVE: SaveData = {
   highScore: 0,
@@ -18,6 +19,7 @@ const DEFAULT_SAVE: SaveData = {
   wins: 0,
   volume: 0.7,
   muted: false,
+  musicMuted: false,
 };
 
 export function loadSaveData(): SaveData {
@@ -38,6 +40,7 @@ export function loadSaveData(): SaveData {
       wins: typeof parsed.wins === 'number' ? Math.max(0, Math.floor(parsed.wins)) : 0,
       volume: typeof parsed.volume === 'number' ? Math.max(0, Math.min(1, parsed.volume)) : 0.7,
       muted: typeof parsed.muted === 'boolean' ? parsed.muted : false,
+      musicMuted: typeof parsed.musicMuted === 'boolean' ? parsed.musicMuted : false,
     };
   } catch {
     return { ...DEFAULT_SAVE };
@@ -49,7 +52,7 @@ export function persistSaveData(data: SaveData): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch {
-    // Ignore storage quota errors in restricted sandboxes
+    // Ignore storage quota errors
   }
 }
 

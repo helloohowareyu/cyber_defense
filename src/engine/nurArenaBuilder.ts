@@ -1,11 +1,8 @@
-// Faithful Three.js 3D reconstruction of Nur's original Godot Map (`src/nur/`)
-// Preserves:
-// - 32x18 Arena Deck + 7x5 Cyan & Magenta Circuit Grid (`node_3d.tscn`)
-// - Extruded 2-layer Bezier Enemy Path (`sistem_jalur_node_3d.gd`)
-// - BaseMusuh Crimson Portal Fortress + Floating Animated Crystal & Satellites (`base_musuh_static_body_3d.gd`)
-// - BaseUtama Cyan Defense Bunker + Floating Reactor, Dual Gyro Rings & Drones (`base_utama_static_body_3d.gd`)
-// - 9 Road-Snapped Interactive Tower Slots (`slot_menara_3d.gd`)
-// Enhanced with grounded outer citadel perimeter spires & PBR circuit textures so the arena feels monumental.
+// Expanded 3D Cyber Arena faithful to Nur's original design (`src/nur/`)
+// Preserves Nur's signature cyber deck, cyan/magenta circuit grid, 2-layer Bezier road,
+// BaseMusuh crimson portal fortress, BaseUtama cyan defense bunker, and 9 Overclock Pads,
+// while adding tidy cyber accessories (neon gate arches, 4 rotating corner radar pylons,
+// perimeter server rack arrays, curve bollards) and an open ground raycast plane for Free Placement.
 
 import * as THREE from 'three';
 import {
@@ -23,7 +20,6 @@ import { createCircuitDeckTextures, createRoadChevronMaterial } from './shaders'
 export interface NurSlotVisual {
   slotId: number;
   group: THREE.Group;
-  hitMesh: THREE.Mesh;
   plusMat: THREE.MeshStandardMaterial;
   frameMat: THREE.MeshStandardMaterial;
   padMat: THREE.MeshStandardMaterial;
@@ -32,7 +28,7 @@ export interface NurSlotVisual {
 export interface NurArenaHandles {
   root: THREE.Group;
   slots: NurSlotVisual[];
-  slotHitMeshes: THREE.Mesh[];
+  floorHitMesh: THREE.Mesh;
   roadChevronMat: THREE.ShaderMaterial;
   update: (dt: number, elapsed: number, coreHpRatio: number) => void;
   setWireframe: (enabled: boolean) => void;
@@ -61,7 +57,7 @@ function buildPathRibbonGeometry(
   halfWidth: number,
   yBottom: number,
   yTop: number,
-  segments = 160
+  segments = 260
 ): THREE.BufferGeometry {
   const positions: number[] = [];
   const normals: number[] = [];
@@ -77,7 +73,6 @@ function buildPathRibbonGeometry(
   for (let i = 0; i <= segments; i++) {
     const dist = (i / segments) * NUR_BAKED_PATH.totalLength;
     const sample = NUR_BAKED_PATH.sampleAtDistance(dist);
-    // Right perpendicular on XZ plane
     const rx = -sample.tangent.z;
     const rz = sample.tangent.x;
 
@@ -108,12 +103,9 @@ function buildPathRibbonGeometry(
   const sideN = new THREE.Vector3();
 
   for (let i = 0; i < segments; i++) {
-    // Top face
     pushQuad(leftTop[i], rightTop[i], leftTop[i + 1], rightTop[i + 1], up, dists[i], dists[i + 1]);
-    // Left side wall
     sideN.subVectors(leftTop[i], rightTop[i]).normalize();
     pushQuad(leftBot[i], leftTop[i], leftBot[i + 1], leftTop[i + 1], sideN, dists[i], dists[i + 1]);
-    // Right side wall
     sideN.negate();
     pushQuad(rightTop[i], rightBot[i], rightTop[i + 1], rightBot[i + 1], sideN, dists[i], dists[i + 1]);
   }
@@ -129,7 +121,7 @@ function buildPathRibbonGeometry(
 /**
  * Builds flat UV-mapped strip right above the road top for animated directional chevrons.
  */
-function buildPathChevronGeometry(halfWidth: number, y: number, segments = 140): THREE.BufferGeometry {
+function buildPathChevronGeometry(halfWidth: number, y: number, segments = 240): THREE.BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
@@ -167,21 +159,22 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   const root = new THREE.Group();
   const deckTextures = createCircuitDeckTextures(maxAnisotropy);
   const wireframeTargets: THREE.MeshStandardMaterial[] = [];
+  const rotatingRadars: THREE.Object3D[] = [];
+  const blinkingLedMats: THREE.MeshStandardMaterial[] = [];
 
-  // 1. Extended Grounded Cyber-Citadel Environment (no floating-island void!)
+  // 1. Grounded Outer Cyber-Citadel Subdeck & Layered Skyline
   const matOuterDeck = new THREE.MeshStandardMaterial({
-    color: 0x050b19,
-    metalness: 0.55,
-    roughness: 0.72,
+    color: 0x050b18,
+    metalness: 0.58,
+    roughness: 0.7,
   });
   wireframeTargets.push(matOuterDeck);
-  const outerGround = new THREE.Mesh(new THREE.PlaneGeometry(180, 140), matOuterDeck);
+  const outerGround = new THREE.Mesh(new THREE.PlaneGeometry(210, 160), matOuterDeck);
   outerGround.rotation.x = -Math.PI / 2;
   outerGround.position.y = -0.45;
   outerGround.receiveShadow = true;
   root.add(outerGround);
 
-  // Layered architectural cyber-citadel skyline along the distant back horizon (keeps foreground clean)
   const matPylonDark = new THREE.MeshStandardMaterial({
     color: 0x081326,
     metalness: 0.78,
@@ -195,22 +188,24 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   const matPylonTrim = new THREE.MeshStandardMaterial({
     color: 0x00d8ff,
     emissive: 0x00a8e8,
-    emissiveIntensity: 0.75,
+    emissiveIntensity: 0.72,
     roughness: 0.25,
   });
   const matPylonMagenta = new THREE.MeshStandardMaterial({
     color: 0xc026d3,
     emissive: 0xa21caf,
-    emissiveIntensity: 0.7,
+    emissiveIntensity: 0.68,
     roughness: 0.25,
   });
+
+  // Distant back-horizon stepped cyber-citadel skyline (clean foreground)
   const horizonTowers: [number, number, number, number][] = [
-    [-22, -16.5, 3.2, 4.4],
-    [-13.5, -17.5, 2.6, 3.2],
-    [-4.5, -18.5, 3.6, 5.2],
-    [5.5, -18.0, 3.0, 4.0],
-    [14.5, -17.0, 2.8, 3.6],
-    [22.5, -15.5, 3.4, 4.6],
+    [-26, -21.5, 3.6, 5.2],
+    [-16.5, -22.5, 3.0, 3.8],
+    [-6.5, -23.5, 4.0, 6.0],
+    [4.5, -23.0, 3.4, 4.8],
+    [15.0, -22.0, 3.2, 4.2],
+    [25.5, -20.5, 3.8, 5.4],
   ];
   horizonTowers.forEach(([sx, sz, sw, sh], idx) => {
     const trim = idx % 2 === 0 ? matPylonTrim : matPylonMagenta;
@@ -220,15 +215,15 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     addBox(root, [sw * 1.02, 0.07, sw * 0.88], [sx, -0.45 + sh * 0.56, sz], trim, false, false);
   });
 
-  // Subtle glowing outer power conduits anchoring the arena deck into the surrounding deck
-  for (const cx of [-11, 0, 11]) {
-    addBox(root, [0.12, 0.02, 16], [cx, -0.43, -NUR_ARENA_LENGTH * 0.5 - 8.2], matPylonTrim, false, false);
-    addBox(root, [0.12, 0.02, 14], [cx, -0.43, NUR_ARENA_LENGTH * 0.5 + 7.2], matPylonTrim, false, false);
+  // Subtle glowing outer deck power conduits anchoring the arena
+  for (const cx of [-14, 0, 14]) {
+    addBox(root, [0.12, 0.02, 18], [cx, -0.43, -NUR_ARENA_LENGTH * 0.5 - 9.2], matPylonTrim, false, false);
+    addBox(root, [0.12, 0.02, 16], [cx, -0.43, NUR_ARENA_LENGTH * 0.5 + 8.2], matPylonTrim, false, false);
   }
 
-  // 2. Nur's Exact 32x18 Cyber Arena Floor (`PapanDalamKotak`)
+  // 2. Expanded Nur Cyber Arena Floor (40m x 24m)
   const matArenaFloor = new THREE.MeshStandardMaterial({
-    color: 0xffffff, // white so CanvasTexture map is not darkened
+    color: 0xffffff,
     map: deckTextures.map,
     bumpMap: deckTextures.bumpMap,
     bumpScale: 0.04,
@@ -245,7 +240,16 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   arenaBoard.receiveShadow = true;
   root.add(arenaBoard);
 
-  // Arena outer chamfered border rails
+  // Invisible top plane at y = 0 for exact BTD6-style Free Placement raycasting across the arena
+  const floorHitMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(NUR_ARENA_WIDTH + 6, NUR_ARENA_LENGTH + 6),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  floorHitMesh.rotation.x = -Math.PI / 2;
+  floorHitMesh.position.y = 0.02;
+  root.add(floorHitMesh);
+
+  // Arena outer chamfered border rails + neon edge rails
   const matBorderRail = new THREE.MeshStandardMaterial({
     color: 0x102341,
     metalness: 0.85,
@@ -257,42 +261,120 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     emissiveIntensity: 0.85,
     roughness: 0.25,
   });
-  addBox(root, [NUR_ARENA_WIDTH + 0.6, 0.34, 0.36], [0, -0.05, -NUR_ARENA_LENGTH * 0.5 - 0.18], matBorderRail, false, true);
-  addBox(root, [NUR_ARENA_WIDTH + 0.6, 0.34, 0.36], [0, -0.05, NUR_ARENA_LENGTH * 0.5 + 0.18], matBorderRail, false, true);
-  addBox(root, [0.36, 0.34, NUR_ARENA_LENGTH + 0.6], [-NUR_ARENA_WIDTH * 0.5 - 0.18, -0.05, 0], matBorderRail, false, true);
-  addBox(root, [0.36, 0.34, NUR_ARENA_LENGTH + 0.6], [NUR_ARENA_WIDTH * 0.5 + 0.18, -0.05, 0], matBorderRail, false, true);
-  addBox(root, [NUR_ARENA_WIDTH + 0.1, 0.04, 0.07], [0, 0.12, -NUR_ARENA_LENGTH * 0.5], matBorderNeon, false, false);
-  addBox(root, [NUR_ARENA_WIDTH + 0.1, 0.04, 0.07], [0, 0.12, NUR_ARENA_LENGTH * 0.5], matBorderNeon, false, false);
+  const hx = NUR_ARENA_WIDTH * 0.5;
+  const hz = NUR_ARENA_LENGTH * 0.5;
+  addBox(root, [NUR_ARENA_WIDTH + 0.8, 0.36, 0.42], [0, -0.04, -hz - 0.21], matBorderRail, false, true);
+  addBox(root, [NUR_ARENA_WIDTH + 0.8, 0.36, 0.42], [0, -0.04, hz + 0.21], matBorderRail, false, true);
+  addBox(root, [0.42, 0.36, NUR_ARENA_LENGTH + 0.8], [-hx - 0.21, -0.04, 0], matBorderRail, false, true);
+  addBox(root, [0.42, 0.36, NUR_ARENA_LENGTH + 0.8], [hx + 0.21, -0.04, 0], matBorderRail, false, true);
+  addBox(root, [NUR_ARENA_WIDTH + 0.2, 0.045, 0.08], [0, 0.14, -hz], matBorderNeon, false, false);
+  addBox(root, [NUR_ARENA_WIDTH + 0.2, 0.045, 0.08], [0, 0.14, hz], matBorderNeon, false, false);
+  addBox(root, [0.08, 0.045, NUR_ARENA_LENGTH + 0.2], [-hx, 0.14, 0], matBorderNeon, false, false);
+  addBox(root, [0.08, 0.045, NUR_ARENA_LENGTH + 0.2], [hx, 0.14, 0], matBorderNeon, false, false);
 
-  // 3. Nur's Exact 7 Vertical & 5 Horizontal Cyan/Magenta Circuit Grid Lines
+  // 3. Nur's Signature Cyan & Magenta Circuit Grid Lines (scaled cleanly to 40x24 -> 9x6 grid)
   const matGridCyan = new THREE.MeshStandardMaterial({
-    color: 0x00e5ff,
-    emissive: 0x00e5ff,
-    emissiveIntensity: 0.95,
+    color: 0x00d8ff,
+    emissive: 0x00c8ff,
+    emissiveIntensity: 0.88,
     roughness: 0.25,
   });
   const matGridMagenta = new THREE.MeshStandardMaterial({
     color: 0xd946ef,
-    emissive: 0xd946ef,
-    emissiveIntensity: 0.85,
+    emissive: 0xc026d3,
+    emissiveIntensity: 0.82,
     roughness: 0.25,
   });
-  const hx = NUR_ARENA_WIDTH * 0.5;
-  const hz = NUR_ARENA_LENGTH * 0.5;
-  for (let i = 0; i < 7; i++) {
-    const px = -hx + 2.2 + ((hx * 2 - 4.4) * i) / 6;
-    addBox(root, [0.04, 0.014, NUR_ARENA_LENGTH - 2.4], [px, 0.008, 0], i % 3 === 1 ? matGridMagenta : matGridCyan, false, false);
+  for (let i = 0; i < 9; i++) {
+    const px = -hx + 2.4 + ((NUR_ARENA_WIDTH - 4.8) * i) / 8;
+    addBox(root, [0.042, 0.014, NUR_ARENA_LENGTH - 2.2], [px, 0.008, 0], i % 3 === 1 ? matGridMagenta : matGridCyan, false, false);
   }
-  for (let j = 0; j < 5; j++) {
-    const pz = -hz + 2.0 + ((hz * 2 - 4.0) * j) / 4;
-    addBox(root, [NUR_ARENA_WIDTH - 2.4, 0.014, 0.04], [0, 0.008, pz], j % 2 === 1 ? matGridMagenta : matGridCyan, false, false);
+  for (let j = 0; j < 6; j++) {
+    const pz = -hz + 2.0 + ((NUR_ARENA_LENGTH - 4.0) * j) / 5;
+    addBox(root, [NUR_ARENA_WIDTH - 2.4, 0.014, 0.042], [0, 0.008, pz], j % 2 === 1 ? matGridMagenta : matGridCyan, false, false);
   }
 
-  // 4. Nur's Exact 2-Layer Extruded Cubic Bezier Road (`SistemJalur`)
+  // =========================================================================
+  // 3B. TIDY CYBER MAP ACCESSORIES (Mounted cleanly on outer border / non-blocking!)
+  // =========================================================================
+  const matRackBody = new THREE.MeshStandardMaterial({ color: 0x0b162a, metalness: 0.82, roughness: 0.3 });
+  const matRackSteel = new THREE.MeshStandardMaterial({ color: 0x1e3a6b, metalness: 0.88, roughness: 0.22 });
+  const matLedCyan = new THREE.MeshStandardMaterial({
+    color: 0x22d3ee,
+    emissive: 0x06b6d4,
+    emissiveIntensity: 1.0,
+    roughness: 0.2,
+  });
+  const matLedAmber = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 0.95,
+    roughness: 0.2,
+  });
+  blinkingLedMats.push(matLedCyan, matLedAmber);
+
+  // (a) 4 Corner Telemetry Radar Pylons (mounted cleanly outside the 4 arena corners)
+  const cornerCoords: [number, number][] = [
+    [-hx - 0.55, -hz - 0.55],
+    [hx + 0.55, -hz - 0.55],
+    [-hx - 0.55, hz + 0.55],
+    [hx + 0.55, hz + 0.55],
+  ];
+  cornerCoords.forEach(([cx, cz]) => {
+    const pylon = new THREE.Group();
+    pylon.position.set(cx, 0, cz);
+    root.add(pylon);
+
+    addBox(pylon, [1.25, 0.45, 1.25], [0, 0.12, 0], matRackBody, false, true);
+    addBox(pylon, [0.76, 1.35, 0.76], [0, 0.95, 0], matRackSteel, true, false);
+    addBox(pylon, [0.82, 0.08, 0.82], [0, 1.48, 0], matBorderNeon, false, false);
+
+    // Rotating Cyber Radar Dish Head
+    const dishHead = new THREE.Group();
+    dishHead.position.y = 1.78;
+    addBox(dishHead, [0.24, 0.28, 0.24], [0, 0, 0], matRackBody, false, false);
+    addBox(dishHead, [0.95, 0.34, 0.08], [0, 0.14, 0.22], matRackSteel, false, false);
+    addBox(dishHead, [0.76, 0.06, 0.1], [0, 0.14, 0.26], matLedCyan, false, false);
+    pylon.add(dishHead);
+    rotatingRadars.push(dishHead);
+  });
+
+  // (b) Perimeter Server Rack Arrays flush outside North & South border walls
+  const rackXs = [-12.5, -5.0, 5.0, 12.5];
+  for (const rx of rackXs) {
+    for (const side of [-1, 1]) {
+      const rz = side * (hz + 0.95);
+      const rack = new THREE.Group();
+      rack.position.set(rx, 0, rz);
+      root.add(rack);
+      addBox(rack, [3.2, 0.72, 0.9], [0, 0.22, 0], matRackBody, true, true);
+      addBox(rack, [2.9, 0.12, 0.96], [0, 0.62, 0], matRackSteel, false, false);
+      // Tiny cyber status LED strips facing the arena
+      const faceZ = -side * 0.47;
+      addBox(rack, [0.85, 0.06, 0.04], [-0.85, 0.36, faceZ], matLedCyan, false, false);
+      addBox(rack, [0.65, 0.06, 0.04], [0.05, 0.36, faceZ], matPylonMagenta, false, false);
+      addBox(rack, [0.75, 0.06, 0.04], [0.92, 0.36, faceZ], matLedAmber, false, false);
+    }
+  }
+
+  // (c) Twin Holographic Neon Gate Arches framing Spawn Exit & Core Entrance
+  const buildGateArch = (xPos: number, neonMat: THREE.Material) => {
+    const arch = new THREE.Group();
+    arch.position.set(xPos, 0, 0);
+    root.add(arch);
+    for (const sz of [-1.45, 1.45]) {
+      addBox(arch, [0.42, 2.35, 0.42], [0, 1.18, sz], matRackBody, true, false);
+      addBox(arch, [0.48, 0.14, 0.48], [0, 1.95, sz], neonMat, false, false);
+    }
+    addBox(arch, [0.46, 0.3, 3.35], [0, 2.38, 0], matRackSteel, true, false);
+    addBox(arch, [0.16, 0.08, 2.75], [0, 2.2, 0], neonMat, false, false);
+  };
+
+  // 4. Nur's Extended 2-Layer Extruded Cubic Bezier Road (`SistemJalur`)
   const matRoadNeon = new THREE.MeshStandardMaterial({
     color: 0x00d8ff,
     emissive: 0x00c2ff,
-    emissiveIntensity: 0.95,
+    emissiveIntensity: 0.92,
     roughness: 0.24,
   });
   const matRoadDeck = new THREE.MeshStandardMaterial({
@@ -304,22 +386,33 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   });
   wireframeTargets.push(matRoadDeck);
 
-  const neonRibbonMesh = new THREE.Mesh(buildPathRibbonGeometry(NUR_NEON_HALF_WIDTH, 0.012, 0.062, 200), matRoadNeon);
+  const neonRibbonMesh = new THREE.Mesh(buildPathRibbonGeometry(NUR_NEON_HALF_WIDTH, 0.012, 0.062, 260), matRoadNeon);
   neonRibbonMesh.receiveShadow = true;
   root.add(neonRibbonMesh);
 
-  const roadDeckMesh = new THREE.Mesh(buildPathRibbonGeometry(NUR_ROAD_HALF_WIDTH, 0.062, 0.122, 200), matRoadDeck);
+  const roadDeckMesh = new THREE.Mesh(buildPathRibbonGeometry(NUR_ROAD_HALF_WIDTH, 0.062, 0.122, 260), matRoadDeck);
   roadDeckMesh.receiveShadow = true;
   root.add(roadDeckMesh);
 
-  // Animated directional chevron flow overlay
   const roadChevronMat = createRoadChevronMaterial();
-  const chevronMesh = new THREE.Mesh(buildPathChevronGeometry(NUR_ROAD_HALF_WIDTH * 0.82, 0.135, 180), roadChevronMat);
+  const chevronMesh = new THREE.Mesh(buildPathChevronGeometry(NUR_ROAD_HALF_WIDTH * 0.8, 0.135, 240), roadChevronMat);
   root.add(chevronMesh);
 
+  // Subtle low-profile roadside guide bollards tucked right outside curve apices
+  const bollardCoords: [number, number][] = [
+    [-10.2, -9.25],
+    [-3.2, 9.45],
+    [4.0, -9.25],
+    [11.0, 8.05],
+  ];
+  for (const [bx, bz] of bollardCoords) {
+    addBox(root, [0.28, 0.42, 0.28], [bx, 0.21, bz], matRackBody, false, false);
+    addBox(root, [0.32, 0.08, 0.32], [bx, 0.42, bz], matBorderNeon, false, false);
+  }
+
   // =========================================================================
-  // 5. NUR'S BASE MUSUH (Crimson Enemy Portal Fortress at x = -14.4, z = 0)
-  // Faithful port of `src/nur/base_musuh_static_body_3d.gd`
+  // 5. BASE MUSUH (Crimson Enemy Portal Fortress at x = -18.0, z = 0)
+  // Faithful port of Nur's `src/nur/base_musuh_static_body_3d.gd`
   // =========================================================================
   const baseMusuh = new THREE.Group();
   baseMusuh.position.set(NUR_BASE_MUSUH_POS.x, 0, NUR_BASE_MUSUH_POS.z);
@@ -332,37 +425,38 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   const matEnemyNeon = new THREE.MeshStandardMaterial({
     color: 0xe11d48,
     emissive: 0xff1138,
-    emissiveIntensity: 1.1,
+    emissiveIntensity: 1.05,
     roughness: 0.22,
   });
   const matEnemyPortalInner = new THREE.MeshStandardMaterial({
     color: 0x24030b,
     emissive: 0xff1138,
-    emissiveIntensity: 1.4,
+    emissiveIntensity: 1.35,
     roughness: 0.18,
   });
   const matEnemyPortalOuter = new THREE.MeshStandardMaterial({
     color: 0x59071a,
     emissive: 0xe11d48,
-    emissiveIntensity: 0.95,
+    emissiveIntensity: 0.92,
     roughness: 0.24,
   });
   wireframeTargets.push(matEnemyArmorMid);
 
-  // Platforms & Exit Deck
-  addBox(baseMusuh, [2.8, 0.24, 3.4], [-0.2, 0.12, 0], matEnemyArmorDark);
-  addBox(baseMusuh, [2.42, 0.11, 3.04], [-0.24, 0.285, 0], matEnemyArmorMid);
-  addBox(baseMusuh, [0.18, 0.34, 3.2], [-1.54, 0.17, 0], matEnemySteel);
+  // Build Spawn Gate Arch right in front of BaseMusuh
+  buildGateArch(NUR_BASE_MUSUH_POS.x + 2.9, matEnemyNeon);
+
+  addBox(baseMusuh, [2.8, 0.24, 3.6], [-0.2, 0.12, 0], matEnemyArmorDark);
+  addBox(baseMusuh, [2.42, 0.11, 3.2], [-0.24, 0.285, 0], matEnemyArmorMid);
+  addBox(baseMusuh, [0.18, 0.34, 3.4], [-1.54, 0.17, 0], matEnemySteel);
   addBox(baseMusuh, [1.55, 0.14, 2.15], [1.42, 0.07, 0], matEnemyDeck);
   addBox(baseMusuh, [0.32, 0.18, 1.95], [0.76, 0.09, 0], matEnemyArmorMid);
   for (let i = 0; i < 4; i++) {
     addBox(baseMusuh, [0.15, 0.03, 0.76], [0.84 + i * 0.34, 0.15, 0], matEnemyNeon, false, false);
   }
   addBox(baseMusuh, [0.06, 0.07, 2.5], [-1.64, 0.24, 0], matEnemyNeon, false, false);
-  addBox(baseMusuh, [2.45, 0.065, 0.075], [-0.24, 0.17, -1.72], matEnemyNeon, false, false);
-  addBox(baseMusuh, [2.45, 0.065, 0.075], [-0.24, 0.17, 1.72], matEnemyNeon, false, false);
+  addBox(baseMusuh, [2.45, 0.065, 0.075], [-0.24, 0.17, -1.82], matEnemyNeon, false, false);
+  addBox(baseMusuh, [2.45, 0.065, 0.075], [-0.24, 0.17, 1.82], matEnemyNeon, false, false);
 
-  // Winged Portal Gate
   addBox(baseMusuh, [1.02, 1.42, 2.28], [-0.25, 0.98, 0], matEnemyArmorDark);
   addBox(baseMusuh, [1.32, 0.36, 1.78], [0.12, 1.52, 0], matEnemyArmorMid);
   addBox(baseMusuh, [0.68, 0.22, 0.42], [0.22, 1.44, -1.05], matEnemySteel);
@@ -376,7 +470,6 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   addBox(baseMusuh, [0.46, 1.04, 0.085], [0.42, 0.78, -0.71], matEnemyNeon, false, false);
   addBox(baseMusuh, [0.46, 1.04, 0.085], [0.42, 0.78, 0.71], matEnemyNeon, false, false);
 
-  // Left & Right Guard Pillars + Antenna Beacons
   for (const sideZ of [-1.25, 1.25]) {
     addBox(baseMusuh, [0.98, 0.8, 0.82], [-0.35, 0.68, sideZ], matEnemyArmorDark);
     addBox(baseMusuh, [0.82, 0.6, 0.68], [-0.35, 1.32, sideZ], matEnemyArmorMid);
@@ -388,9 +481,8 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     addBox(baseMusuh, [0.36, 0.075, 0.38], [0.92, 0.77, sideZ], matEnemyNeon, false, false);
   }
 
-  // Nur's Floating Animated Crimson Crystal + Ring + Satellites
   const enemyFloatCore = new THREE.Group();
-  enemyFloatCore.scale.setScalar(1.3);
+  enemyFloatCore.scale.setScalar(1.32);
   addBox(enemyFloatCore, [0.52, 0.88, 0.52], [0, 0, 0], matEnemyNeon, false, false);
   addBox(enemyFloatCore, [0.96, 0.08, 0.08], [0, 0, 0], matEnemySteel, false, false);
   addBox(enemyFloatCore, [0.08, 0.08, 0.96], [0, 0, 0], matEnemySteel, false, false);
@@ -399,7 +491,7 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   baseMusuh.add(enemyFloatCore);
 
   const enemyFloatRing = new THREE.Group();
-  enemyFloatRing.scale.setScalar(1.3);
+  enemyFloatRing.scale.setScalar(1.32);
   addBox(enemyFloatRing, [0.12, 0.08, 1.25], [0, 0.62, 0], matEnemyNeon, false, false);
   addBox(enemyFloatRing, [0.12, 0.08, 1.25], [0, -0.62, 0], matEnemyNeon, false, false);
   addBox(enemyFloatRing, [0.12, 1.25, 0.08], [0, 0, -0.62], matEnemySteel, false, false);
@@ -419,8 +511,8 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   });
 
   // =========================================================================
-  // 6. NUR'S BASE UTAMA / ENERGY CORE (Cyan Defense Bunker at x = +14.14, z = 0)
-  // Faithful port of `src/nur/base_utama_static_body_3d.gd`
+  // 6. BASE UTAMA / ENERGY CORE (Cyan Defense Bunker at x = +17.8, z = 0)
+  // Faithful port of Nur's `src/nur/base_utama_static_body_3d.gd`
   // =========================================================================
   const baseUtama = new THREE.Group();
   baseUtama.position.set(NUR_BASE_UTAMA_POS.x, 0, NUR_BASE_UTAMA_POS.z);
@@ -439,7 +531,7 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   const matReactorInner = new THREE.MeshStandardMaterial({
     color: 0x032b3e,
     emissive: 0x00d8ff,
-    emissiveIntensity: 1.45,
+    emissiveIntensity: 1.4,
     roughness: 0.16,
   });
   const matReactorOuter = new THREE.MeshStandardMaterial({
@@ -450,7 +542,9 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   });
   wireframeTargets.push(matCoreMid);
 
-  // Bunker base + front defense deck + forward turret
+  // Build Defense Core Arch right in front of BaseUtama
+  buildGateArch(NUR_BASE_UTAMA_POS.x - 3.05, matCoreNeon);
+
   addBox(baseUtama, [3.1, 0.28, 3.9], [0.3, 0.14, 0], matCoreDark);
   addBox(baseUtama, [2.65, 0.24, 3.35], [0.42, 0.4, 0], matCoreMid);
   addBox(baseUtama, [0.22, 0.42, 3.5], [1.74, 0.21, 0], matCoreFrame);
@@ -461,7 +555,6 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   addBox(baseUtama, [0.52, 0.14, 0.18], [-2.48, 0.34, 0], matCoreFrame);
   addBox(baseUtama, [0.12, 0.12, 0.16], [-2.75, 0.34, 0], matCoreNeon, false, false);
 
-  // Side armor wings & perimeter cyan trims
   for (const sz of [-2.12, 2.12]) {
     addBox(baseUtama, [1.45, 0.24, 0.46], [0.25, 0.28, sz], matCoreFrame);
     addBox(baseUtama, [0.3, 0.48, 0.1], [0.75, 0.52, sz], matCoreMid);
@@ -471,7 +564,6 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   addBox(baseUtama, [2.9, 0.07, 0.085], [0.35, 0.27, 1.97], matCoreNeon, false, false);
   addBox(baseUtama, [0.085, 0.07, 3.7], [1.81, 0.27, 0], matCoreNeon, false, false);
 
-  // Stepped Shield Generator Dome + 4 Corner Pylons
   addBox(baseUtama, [1.72, 0.36, 2.02], [0.2, 0.68, 0], matCoreDark);
   addBox(baseUtama, [1.32, 0.44, 1.58], [0.2, 1.02, 0], matCoreMid);
   addBox(baseUtama, [0.88, 0.28, 1.08], [0.2, 1.34, 0], matCoreFrame);
@@ -484,7 +576,6 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     }
   }
 
-  // Left & Right Radar/Sensor Towers
   for (const sideZ of [-1.42, 1.42]) {
     addBox(baseUtama, [0.92, 0.46, 0.86], [0.38, 0.74, sideZ], matCoreDark);
     addBox(baseUtama, [0.7, 0.36, 0.7], [0.3, 1.13, sideZ], matCoreMid);
@@ -493,7 +584,6 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     addBox(baseUtama, [0.095, 0.34, 0.62], [0.32, 1.82, sideZ], matCoreNeon, false, false);
   }
 
-  // Nur's Floating Animated Nested Reactor Core + Dual Counter-Rotating Gyro Rings + Drones
   const reactorCore = new THREE.Group();
   reactorCore.scale.setScalar(1.25);
   addBox(reactorCore, [0.54, 0.54, 0.54], [0, 0, 0], matReactorOuter, false, false);
@@ -529,11 +619,10 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   });
 
   // =========================================================================
-  // 7. NUR'S 9 STRATEGIC TOWER SLOTS (`src/nur/slot_menara_3d.gd`)
-  // Snapped exactly 0.5m from neon road edge and facing the road!
+  // 7. NUR'S 9 CYBER OVERCLOCK BONUS PADS (`slot_menara_3d.gd`)
+  // Free placement works ANYWHERE; placing on these glowing pads grants +15% Range & +12% Fire Rate!
   // =========================================================================
   const slots: NurSlotVisual[] = [];
-  const slotHitMeshes: THREE.Mesh[] = [];
 
   for (const s of NUR_TOWER_SLOTS) {
     const group = new THREE.Group();
@@ -542,14 +631,14 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     root.add(group);
 
     const padMat = new THREE.MeshStandardMaterial({
-      color: 0x111c2e,
-      metalness: 0.78,
-      roughness: 0.34,
+      color: 0x101c31,
+      metalness: 0.8,
+      roughness: 0.32,
     });
     const plusMat = new THREE.MeshStandardMaterial({
-      color: 0x00e5ff,
-      emissive: 0x00c8ff,
-      emissiveIntensity: 1.05,
+      color: 0xfbbf24, // Gold-cyan tactical Overclock Node cue!
+      emissive: 0xf59e0b,
+      emissiveIntensity: 0.95,
       roughness: 0.24,
     });
     const frameMat = new THREE.MeshStandardMaterial({
@@ -559,49 +648,43 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
       roughness: 0.28,
     });
 
-    // AlasPad (1.3 x 0.08 x 1.3)
     addBox(group, [s.padSize, 0.09, s.padSize], [0, 0.045, 0], padMat, false, true);
 
-    // Subtle glowing corner frame trims for clear buildable readability
     const edge = s.padSize * 0.5 - 0.04;
-    addBox(group, [s.padSize, 0.025, 0.05], [0, 0.092, -edge], frameMat, false, false);
-    addBox(group, [s.padSize, 0.025, 0.05], [0, 0.092, edge], frameMat, false, false);
-    addBox(group, [0.05, 0.025, s.padSize], [-edge, 0.092, 0], frameMat, false, false);
-    addBox(group, [0.05, 0.025, s.padSize], [edge, 0.092, 0], frameMat, false, false);
+    addBox(group, [s.padSize, 0.025, 0.055], [0, 0.092, -edge], frameMat, false, false);
+    addBox(group, [s.padSize, 0.025, 0.055], [0, 0.092, edge], frameMat, false, false);
+    addBox(group, [0.055, 0.025, s.padSize], [-edge, 0.092, 0], frameMat, false, false);
+    addBox(group, [0.055, 0.025, s.padSize], [edge, 0.092, 0], frameMat, false, false);
 
-    // Nur's signature '+' marker in the center of empty slot pads
+    // Nur's signature '+' marker in the center of each Overclock Pad
     addBox(group, [0.42, 0.036, 0.08], [0, 0.1, 0], plusMat, false, false);
     addBox(group, [0.08, 0.036, 0.42], [0, 0.1, 0], plusMat, false, false);
-
-    // Dedicated raycast hit proxy (slightly enlarged vertically for effortless clicking)
-    const hitMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(s.padSize + 0.3, 1.35, s.padSize + 0.3),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
-    hitMesh.position.set(0, 0.65, 0);
-    hitMesh.userData = { slotId: s.id };
-    group.add(hitMesh);
-    slotHitMeshes.push(hitMesh);
 
     slots.push({
       slotId: s.id,
       group,
-      hitMesh,
       plusMat,
       frameMat,
       padMat,
     });
   }
 
-  // Color helpers pre-allocated outside animation loop (zero GC)
-  const _cyanCol = new THREE.Color(0x00f0ff);
+  const _cyanCol = new THREE.Color(0x00d8ff);
   const _warnCol = new THREE.Color(0xff2a4a);
   const _blendCol = new THREE.Color();
 
   const update = (dt: number, elapsed: number, coreHpRatio: number) => {
     roadChevronMat.uniforms.uTime.value = elapsed;
 
-    // BaseMusuh floating animation (matches Nur's base_musuh_static_body_3d.gd)
+    // Rotate 4 corner radar dishes smoothly
+    rotatingRadars.forEach((dish, idx) => {
+      dish.rotation.y = elapsed * (idx % 2 === 0 ? 0.65 : -0.65) + idx * 1.4;
+    });
+    // Subtle server LED pulse
+    matLedCyan.emissiveIntensity = 0.78 + 0.28 * Math.sin(elapsed * 2.4);
+    matLedAmber.emissiveIntensity = 0.72 + 0.32 * Math.cos(elapsed * 3.1);
+
+    // BaseMusuh floating animation
     const enemyBob = Math.sin(elapsed * 2.6) * 0.16;
     enemyFloatCore.position.set(0.45, 3.05 + enemyBob, 0);
     enemyFloatCore.rotation.y += dt * 1.1;
@@ -616,9 +699,9 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     satR.position.set(0.3, 2.93 + satBob, 1.65);
     satR.rotation.x -= dt * 0.85;
 
-    matEnemyNeon.emissiveIntensity = 1.0 + 0.24 * Math.sin(elapsed * 3.0);
+    matEnemyNeon.emissiveIntensity = 0.98 + 0.22 * Math.sin(elapsed * 3.0);
 
-    // BaseUtama floating animation (matches Nur's base_utama_static_body_3d.gd)
+    // BaseUtama floating animation
     const coreBob = Math.sin(elapsed * 2.5) * 0.16;
     reactorCore.position.set(-0.15, 3.2 + coreBob, 0);
     reactorCore.rotation.y -= dt * 1.2;
@@ -638,13 +721,12 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     droneR.position.set(-0.15, 3.1 + droneBob, 1.78);
     droneR.rotation.y -= dt * 0.95;
 
-    // Shift Energy Core glow toward warning crimson when Core HP drops below 40%
     const danger = THREE.MathUtils.clamp((0.45 - coreHpRatio) / 0.45, 0, 1);
     _blendCol.copy(_cyanCol).lerp(_warnCol, danger);
     matCoreNeon.color.copy(_blendCol);
     matCoreNeon.emissive.copy(_blendCol);
     matReactorInner.emissive.copy(_blendCol);
-    matCoreNeon.emissiveIntensity = 0.98 + 0.24 * Math.sin(elapsed * (danger > 0.3 ? 6.5 : 2.8));
+    matCoreNeon.emissiveIntensity = 0.96 + 0.24 * Math.sin(elapsed * (danger > 0.3 ? 6.5 : 2.8));
   };
 
   const setWireframe = (enabled: boolean) => {
@@ -656,7 +738,7 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
   return {
     root,
     slots,
-    slotHitMeshes,
+    floorHitMesh,
     roadChevronMat,
     update,
     setWireframe,

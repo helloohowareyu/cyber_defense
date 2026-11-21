@@ -1,11 +1,28 @@
-// Port & calibration of res://src/combat/game_3d/core/game_constants_3d.gd
-// & res://src/combat/resources/presets/*.tres (GDD Sections 5, 6, 7, 8)
+// Cyber Defense 3D — Core Game Constants, 6 Towers (with Lv.4 Ultimates),
+// 6 Cyber-Themed Enemies, and 15-Wave 3-Stage + Final Boss Campaign.
 
-export type TowerType = 'laser' | 'cannon' | 'freeze' | 'armor_pen';
-export type EnemyType = 'goblin' | 'orc' | 'harpy' | 'demon_king';
-export type TargetingMode = 'FRONT_MOST' | 'LOWEST_HP' | 'CLOSEST';
+export type TowerType = 'laser' | 'cannon' | 'freeze' | 'armor_pen' | 'tesla' | 'farm';
+export type EnemyType =
+  | 'bit_crawler'
+  | 'packet_wisp'
+  | 'worm_swarm'
+  | 'trojan_brute'
+  | 'aegis_dreadnought'
+  | 'omega_overlord';
+
+// BTD6-style 4 targeting modes
+export type TargetingMode = 'FIRST' | 'STRONG' | 'LAST' | 'CLOSE';
 export type GamePhase = 'title' | 'playing' | 'paused' | 'victory' | 'gameover';
 export type CameraPreset = 'tactical' | 'action' | 'topdown' | 'core';
+
+export interface TowerUltimateSpec {
+  id: string;
+  name: string;
+  hotkey: string;
+  description: string;
+  cooldownSec: number;
+  durationSec: number;
+}
 
 export interface TowerPreset {
   id: TowerType;
@@ -15,15 +32,21 @@ export interface TowerPreset {
   role: string;
   description: string;
   baseDamage: number;
-  baseRangeGdd: number; // GDD px unit (120..150)
+  baseRangeGdd: number;
   fireRateSec: number;
   baseCost: number;
   aoeRadiusGdd: number;
-  slowRatio: number; // 0..1 reduction
+  slowRatio: number;
   slowDurationSec: number;
   ignoresArmor: boolean;
+  chainCount: number; // Tesla arc jumps
+  incomePerCycle: number; // Quantum Data Farm Gold packet per cycle
+  incomeCycleSec: number;
+  waveDividend: number; // Extra Gold granted by Farm on wave clear
   accentHex: string;
   accentColor: number;
+  tierNames: [string, string, string, string];
+  ultimate: TowerUltimateSpec;
 }
 
 export interface EnemyPreset {
@@ -31,11 +54,12 @@ export interface EnemyPreset {
   displayName: string;
   role: string;
   baseHp: number;
-  speedGdd: number; // GDD speed units (35..130)
+  speedGdd: number;
   armor: number;
   rewardGold: number;
   leakDamage: number;
   isBoss: boolean;
+  isFinalBoss: boolean;
   isFlying: boolean;
   primaryColor: number;
   accentColor: number;
@@ -46,204 +70,545 @@ export interface WaveEntry {
   enemyId: EnemyType;
   count: number;
   spawnInterval: number;
+  startDelay?: number;
 }
 
-export const STARTING_GOLD = 300;
-export const STARTING_CORE_HP = 20;
-export const REGULAR_LEAK_DAMAGE = 2;
-export const BOSS_LEAK_DAMAGE = 5;
-export const TOTAL_WAVES = 5;
-export const MAX_TOWER_LEVEL = 3;
+export interface WaveDefinition {
+  wave: number;
+  stage: 1 | 2 | 3 | 4;
+  stageLabel: string;
+  title: string;
+  subtitle: string;
+  isBossWave: boolean;
+  isFinalStage: boolean;
+  entries: WaveEntry[];
+}
 
-// Scale calibrated for Nur's 32m x 18m 3D arena (path length ~44m)
-// Preserves exact GDD ratios across towers & enemies while ensuring tactical lane coverage.
-export const RANGE_GDD_TO_METERS = 0.048; // 150px -> 7.2m, 140px -> 6.72m, 130px -> 6.24m, 120px -> 5.76m
-export const AOE_GDD_TO_METERS = 0.085; // 35px -> 2.975m blast radius
-export const SPEED_GDD_TO_MPS = 0.032; // Goblin 80 -> 2.56m/s, Harpy 130 -> 4.16m/s, Orc 45 -> 1.44m/s, Boss 35 -> 1.12m/s
+export const STARTING_GOLD = 450;
+export const STARTING_CORE_HP = 50;
+export const TOTAL_WAVES = 15;
+export const MAX_TOWER_LEVEL = 4; // Lv.4 APEX unlocks Active Ultimate!
+
+// Overclock bonus when placing a tower directly on one of Nur's 9 Cyber Overclock Pads
+export const OVERCLOCK_RANGE_MULT = 1.15;
+export const OVERCLOCK_FIRERATE_MULT = 0.88; // 12% faster cooldown
+
+// Scale calibrated for Nur's expanded 40m x 24m Cyber Arena (path length ~78m)
+export const RANGE_GDD_TO_METERS = 0.052; // 150 -> 7.8m, 140 -> 7.28m, 130 -> 6.76m, 120 -> 6.24m
+export const AOE_GDD_TO_METERS = 0.09; // 38 -> 3.42m blast radius
+export const SPEED_GDD_TO_MPS = 0.036; // Balanced movement across the ~78m multi-switchback track
 
 export const TOWER_PRESETS: Record<TowerType, TowerPreset> = {
   laser: {
     id: 'laser',
     keyHint: '1',
-    displayName: 'Laser Tower',
+    displayName: 'Laser Prism',
     shortName: 'Laser',
-    role: 'Rapid Single-Target',
-    description: 'Sinar plasma kontinyu dengan frekuensi tembak tinggi dan jangkauan terluas.',
-    baseDamage: 15,
+    role: 'Rapid Beam',
+    description: 'Sinar laser frekuensi tinggi dengan jangkauan luas untuk membersihkan malware secara stabil.',
+    baseDamage: 16,
     baseRangeGdd: 150,
-    fireRateSec: 0.5,
+    fireRateSec: 0.44,
     baseCost: 100,
     aoeRadiusGdd: 0,
     slowRatio: 0,
     slowDurationSec: 0,
     ignoresArmor: false,
+    chainCount: 0,
+    incomePerCycle: 0,
+    incomeCycleSec: 0,
+    waveDividend: 0,
     accentHex: '#22D3EE',
     accentColor: 0x22d3ee,
+    tierNames: ['Mk.I Emitter', 'Dual Lens', 'Hyper Focus', 'Apex Prism'],
+    ultimate: {
+      id: 'prism_overdrive',
+      name: 'Prism Overdrive',
+      hotkey: 'Q',
+      description: 'Meningkatkan kecepatan tembak 2.6× dan tembakan ganda selama 7 detik.',
+      cooldownSec: 22,
+      durationSec: 7,
+    },
   },
   cannon: {
     id: 'cannon',
     keyHint: '2',
-    displayName: 'Cannon Tower',
+    displayName: 'Plasma Cannon',
     shortName: 'Cannon',
-    role: 'Area Splash (AoE)',
-    description: 'Proyektil artileri berat yang meledak dan menghasilkan shockwave AoE.',
-    baseDamage: 40,
-    baseRangeGdd: 120,
-    fireRateSec: 1.5,
-    baseCost: 150,
-    aoeRadiusGdd: 35,
+    role: 'AoE Splash',
+    description: 'Artileri plasma berat yang meledak dalam radius luas untuk menghancurkan gerombolan musuh.',
+    baseDamage: 38,
+    baseRangeGdd: 125,
+    fireRateSec: 1.32,
+    baseCost: 140,
+    aoeRadiusGdd: 38,
     slowRatio: 0,
     slowDurationSec: 0,
     ignoresArmor: false,
+    chainCount: 0,
+    incomePerCycle: 0,
+    incomeCycleSec: 0,
+    waveDividend: 0,
     accentHex: '#FB923C',
     accentColor: 0xfb923c,
+    tierNames: ['Mk.I Mortar', 'Cluster Shell', 'Thermobaric', 'Orbital Howitzer'],
+    ultimate: {
+      id: 'emp_barrage',
+      name: 'Orbital EMP Barrage',
+      hotkey: 'E',
+      description: 'Menjatuhkan 5 ledakan plasma EMP di jalur musuh (240 AoE DMG + stun singkat).',
+      cooldownSec: 26,
+      durationSec: 2,
+    },
   },
   freeze: {
     id: 'freeze',
     keyHint: '3',
-    displayName: 'Freeze Tower',
-    shortName: 'Freeze',
-    role: 'Cryo Slow Control',
-    description: 'Kristal Blinn-Phong yang membekukan musuh (-40% speed selama 2.5 detik).',
-    baseDamage: 5,
-    baseRangeGdd: 130,
-    fireRateSec: 1.0,
-    baseCost: 125,
-    aoeRadiusGdd: 0,
-    slowRatio: 0.4,
-    slowDurationSec: 2.5,
+    displayName: 'Cryo Emitter',
+    shortName: 'Cryo',
+    role: 'Slow & Control',
+    description: 'Kristal Blinn-Phong yang memperlambat musuh (-42% speed) & memicu pulsa es area di Lv.3+.',
+    baseDamage: 8,
+    baseRangeGdd: 132,
+    fireRateSec: 0.92,
+    baseCost: 120,
+    aoeRadiusGdd: 26,
+    slowRatio: 0.42,
+    slowDurationSec: 2.8,
     ignoresArmor: false,
+    chainCount: 0,
+    incomePerCycle: 0,
+    incomeCycleSec: 0,
+    waveDividend: 0,
     accentHex: '#7DD3FC',
     accentColor: 0x7dd3fc,
+    tierNames: ['Frost Core', 'Cryo Pulse', 'Permafrost', 'Zero-Kelvin Node'],
+    ultimate: {
+      id: 'absolute_zero',
+      name: 'Absolute Zero',
+      hotkey: 'R',
+      description: 'Membekukan SELURUH musuh di arena (-80% speed selama 5 detik) + meluruhkan armor.',
+      cooldownSec: 28,
+      durationSec: 5,
+    },
   },
   armor_pen: {
     id: 'armor_pen',
     keyHint: '4',
-    displayName: 'Armor Pen Tower',
+    displayName: 'Railgun Sniper',
     shortName: 'Railgun',
-    role: '100% Armor Pierce',
-    description: 'Railgun elektromagnetik yang menembus 100% armor Orc & Boss Demon King.',
-    baseDamage: 25,
-    baseRangeGdd: 140,
-    fireRateSec: 1.0,
+    role: '100% Pierce',
+    description: 'Senapan elektromagnetik jarak jauh yang menembus 100% armor Trojan, Dreadnought, & Boss.',
+    baseDamage: 32,
+    baseRangeGdd: 168,
+    fireRateSec: 1.05,
     baseCost: 175,
     aoeRadiusGdd: 0,
     slowRatio: 0,
     slowDurationSec: 0,
     ignoresArmor: true,
+    chainCount: 0,
+    incomePerCycle: 0,
+    incomeCycleSec: 0,
+    waveDividend: 0,
     accentHex: '#F43F5E',
     accentColor: 0xf43f5e,
+    tierNames: ['Gauss Rifle', 'Twin Rail', 'Mag-Accelerator', 'Hyper Annihilator'],
+    ultimate: {
+      id: 'hyper_rail',
+      name: 'Hyper-Rail Lance',
+      hotkey: 'T',
+      description: 'Menembakkan sinar railgun orbital ke musuh terkuat / Boss (520 True Damage).',
+      cooldownSec: 24,
+      durationSec: 1,
+    },
+  },
+  tesla: {
+    id: 'tesla',
+    keyHint: '5',
+    displayName: 'Tesla Arc Relay',
+    shortName: 'Tesla',
+    role: 'Chain Lightning',
+    description: 'Menara tegangan tinggi yang menyambar hingga 3–6 musuh sekaligus secara berantai.',
+    baseDamage: 18,
+    baseRangeGdd: 130,
+    fireRateSec: 0.78,
+    baseCost: 150,
+    aoeRadiusGdd: 0,
+    slowRatio: 0,
+    slowDurationSec: 0,
+    ignoresArmor: false,
+    chainCount: 3,
+    incomePerCycle: 0,
+    incomeCycleSec: 0,
+    waveDividend: 0,
+    accentHex: '#C084FC',
+    accentColor: 0xc084fc,
+    tierNames: ['Arc Coil', 'Surge Relay', 'Storm Spire', 'Ion Conduit'],
+    ultimate: {
+      id: 'ion_storm',
+      name: 'Ion Overload Storm',
+      hotkey: 'Y',
+      description: 'Menyambar hingga 10 musuh aktif di arena dengan petir cyber bertegangan tinggi.',
+      cooldownSec: 25,
+      durationSec: 1.5,
+    },
+  },
+  farm: {
+    id: 'farm',
+    keyHint: '6',
+    displayName: 'Quantum Farm',
+    shortName: 'Data Farm',
+    role: 'Gold Farming',
+    description: 'Menambang paket data secara berkala selama wave berjalan + dividen Gold di akhir wave.',
+    baseDamage: 0,
+    baseRangeGdd: 68,
+    fireRateSec: 4.5,
+    baseCost: 160,
+    aoeRadiusGdd: 0,
+    slowRatio: 0,
+    slowDurationSec: 0,
+    ignoresArmor: false,
+    chainCount: 0,
+    incomePerCycle: 28,
+    incomeCycleSec: 4.2,
+    waveDividend: 45,
+    accentHex: '#34D399',
+    accentColor: 0x34d399,
+    tierNames: ['Data Miner', 'Crypto Cluster', 'Quantum Vault', 'Central Bank Node'],
+    ultimate: {
+      id: 'quantum_surge',
+      name: 'Quantum Jackpot',
+      hotkey: 'F',
+      description: 'Mencairkan cadangan data instan sebesar +300 Gold ke kas pertahanan.',
+      cooldownSec: 30,
+      durationSec: 1,
+    },
   },
 };
 
-export const TOWER_ORDER: TowerType[] = ['laser', 'cannon', 'freeze', 'armor_pen'];
+export const TOWER_ORDER: TowerType[] = ['laser', 'cannon', 'freeze', 'armor_pen', 'tesla', 'farm'];
 
+// 100% Cyber-Defense themed enemies (zero fantasy monsters!)
 export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
-  goblin: {
-    id: 'goblin',
-    displayName: 'Goblin Scout',
-    role: 'Unit Serbu Dasar',
-    baseHp: 100,
-    speedGdd: 80,
+  bit_crawler: {
+    id: 'bit_crawler',
+    displayName: 'Bit-Crawler',
+    role: 'Malware Drone',
+    baseHp: 58,
+    speedGdd: 78,
     armor: 0,
-    rewardGold: 15,
-    leakDamage: REGULAR_LEAK_DAMAGE,
+    rewardGold: 16,
+    leakDamage: 2,
     isBoss: false,
+    isFinalBoss: false,
     isFlying: false,
-    primaryColor: 0x16a34a,
-    accentColor: 0x4ade80,
-    scale: 1.0,
+    primaryColor: 0x10b981,
+    accentColor: 0x34d399,
+    scale: 0.95,
   },
-  orc: {
-    id: 'orc',
-    displayName: 'Orc Juggernaut',
-    role: 'Tank Berarmor (10 Armor)',
-    baseHp: 250,
-    speedGdd: 45,
-    armor: 10,
-    rewardGold: 25,
-    leakDamage: REGULAR_LEAK_DAMAGE,
-    isBoss: false,
-    isFlying: false,
-    primaryColor: 0xd97706,
-    accentColor: 0xfbbf24,
-    scale: 1.25,
-  },
-  harpy: {
-    id: 'harpy',
-    displayName: 'Harpy Striker',
-    role: 'Drone Cepat Udara',
-    baseHp: 80,
-    speedGdd: 130,
+  worm_swarm: {
+    id: 'worm_swarm',
+    displayName: 'Zero-Day Worm',
+    role: 'Micro-Swarm Cepat',
+    baseHp: 38,
+    speedGdd: 108,
     armor: 0,
-    rewardGold: 20,
-    leakDamage: REGULAR_LEAK_DAMAGE,
+    rewardGold: 11,
+    leakDamage: 1,
     isBoss: false,
+    isFinalBoss: false,
+    isFlying: false,
+    primaryColor: 0x06b6d4,
+    accentColor: 0xf472b6,
+    scale: 0.78,
+  },
+  packet_wisp: {
+    id: 'packet_wisp',
+    displayName: 'Packet Phantom',
+    role: 'Hover Interceptor',
+    baseHp: 72,
+    speedGdd: 122,
+    armor: 2,
+    rewardGold: 22,
+    leakDamage: 2,
+    isBoss: false,
+    isFinalBoss: false,
     isFlying: true,
-    primaryColor: 0xa855f7,
+    primaryColor: 0x9333ea,
     accentColor: 0xe879f9,
     scale: 1.0,
   },
-  demon_king: {
-    id: 'demon_king',
-    displayName: 'Demon King',
-    role: 'Boss Akhir (20 Armor)',
-    baseHp: 1500,
-    speedGdd: 35,
-    armor: 20,
-    rewardGold: 150,
-    leakDamage: BOSS_LEAK_DAMAGE,
-    isBoss: true,
+  trojan_brute: {
+    id: 'trojan_brute',
+    displayName: 'Trojan Juggernaut',
+    role: 'Armored Breach Mech',
+    baseHp: 210,
+    speedGdd: 48,
+    armor: 8,
+    rewardGold: 32,
+    leakDamage: 4,
+    isBoss: false,
+    isFinalBoss: false,
     isFlying: false,
-    primaryColor: 0x991b1b,
-    accentColor: 0xff1e42,
-    scale: 1.75,
+    primaryColor: 0xd97706,
+    accentColor: 0xfbbf24,
+    scale: 1.24,
+  },
+  aegis_dreadnought: {
+    id: 'aegis_dreadnought',
+    displayName: 'Firewall Breaker',
+    role: 'Mid-Boss Dreadnought',
+    baseHp: 1150,
+    speedGdd: 36,
+    armor: 14,
+    rewardGold: 220,
+    leakDamage: 12,
+    isBoss: true,
+    isFinalBoss: false,
+    isFlying: false,
+    primaryColor: 0x312e81,
+    accentColor: 0xf59e0b,
+    scale: 1.62,
+  },
+  omega_overlord: {
+    id: 'omega_overlord',
+    displayName: 'OMEGA-0 Rootkit',
+    role: 'FINAL STAGE BOSS',
+    baseHp: 3200,
+    speedGdd: 30,
+    armor: 18,
+    rewardGold: 500,
+    leakDamage: 50,
+    isBoss: true,
+    isFinalBoss: true,
+    isFlying: false,
+    primaryColor: 0x7f1d1d,
+    accentColor: 0xff1744,
+    scale: 2.05,
   },
 };
 
-export const WAVE_INFO: Record<number, { title: string; subtitle: string; entries: WaveEntry[] }> = {
+export const WAVE_DEFINITIONS: Record<number, WaveDefinition> = {
+  // STAGE 1: PERIMETER SCAN (Friendly onboarding + farming window)
   1: {
-    title: 'Wave 1 — Pengintaian',
-    subtitle: '5 Goblin Scout',
-    entries: [{ enemyId: 'goblin', count: 5, spawnInterval: 1.25 }],
+    wave: 1,
+    stage: 1,
+    stageLabel: 'Stage 1 · Perimeter Scan',
+    title: 'Wave 1 — Paket Intrusi Awal',
+    subtitle: '6 Bit-Crawler',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [{ enemyId: 'bit_crawler', count: 6, spawnInterval: 1.25 }],
   },
   2: {
-    title: 'Wave 2 — Serbuan Cepat',
-    subtitle: '6 Goblin, 2 Harpy',
+    wave: 2,
+    stage: 1,
+    stageLabel: 'Stage 1 · Perimeter Scan',
+    title: 'Wave 2 — Gelombang Malware',
+    subtitle: '8 Bit-Crawler · 4 Zero-Day Worm',
+    isBossWave: false,
+    isFinalStage: false,
     entries: [
-      { enemyId: 'goblin', count: 6, spawnInterval: 1.05 },
-      { enemyId: 'harpy', count: 2, spawnInterval: 1.1 },
+      { enemyId: 'bit_crawler', count: 8, spawnInterval: 1.05 },
+      { enemyId: 'worm_swarm', count: 4, spawnInterval: 0.65 },
     ],
   },
   3: {
-    title: 'Wave 3 — Barisan Lapis Baja',
-    subtitle: '5 Goblin, 3 Orc Berarmor',
+    wave: 3,
+    stage: 1,
+    stageLabel: 'Stage 1 · Perimeter Scan',
+    title: 'Wave 3 — Serbuan Drone Cepat',
+    subtitle: '6 Bit-Crawler · 5 Packet Phantom',
+    isBossWave: false,
+    isFinalStage: false,
     entries: [
-      { enemyId: 'goblin', count: 5, spawnInterval: 0.95 },
-      { enemyId: 'orc', count: 3, spawnInterval: 1.7 },
+      { enemyId: 'bit_crawler', count: 6, spawnInterval: 0.95 },
+      { enemyId: 'packet_wisp', count: 5, spawnInterval: 1.0 },
     ],
   },
   4: {
-    title: 'Wave 4 — Serangan Terpadu',
-    subtitle: '4 Goblin, 3 Orc, 3 Harpy',
+    wave: 4,
+    stage: 1,
+    stageLabel: 'Stage 1 · Perimeter Scan',
+    title: 'Wave 4 — Kawanan Zero-Day',
+    subtitle: '14 Zero-Day Worm · 4 Bit-Crawler',
+    isBossWave: false,
+    isFinalStage: false,
     entries: [
-      { enemyId: 'goblin', count: 4, spawnInterval: 0.85 },
-      { enemyId: 'orc', count: 3, spawnInterval: 1.55 },
-      { enemyId: 'harpy', count: 3, spawnInterval: 1.0 },
+      { enemyId: 'worm_swarm', count: 14, spawnInterval: 0.48 },
+      { enemyId: 'bit_crawler', count: 4, spawnInterval: 0.9 },
     ],
   },
   5: {
-    title: 'Wave 5 — Invasi Demon King',
-    subtitle: '1 Boss Demon King, 4 Orc, 4 Harpy',
+    wave: 5,
+    stage: 1,
+    stageLabel: 'Stage 1 · Perimeter Scan',
+    title: 'Wave 5 — Pelopor Trojan Lapis Baja',
+    subtitle: '3 Trojan Juggernaut · 6 Bit-Crawler',
+    isBossWave: false,
+    isFinalStage: false,
     entries: [
-      { enemyId: 'orc', count: 2, spawnInterval: 1.4 },
-      { enemyId: 'demon_king', count: 1, spawnInterval: 2.2 },
-      { enemyId: 'harpy', count: 4, spawnInterval: 0.95 },
-      { enemyId: 'orc', count: 2, spawnInterval: 1.5 },
+      { enemyId: 'bit_crawler', count: 6, spawnInterval: 0.85 },
+      { enemyId: 'trojan_brute', count: 3, spawnInterval: 1.75 },
+    ],
+  },
+
+  // STAGE 2: FIREWALL BREACH (Armored pushes + Wave 10 Mid-Boss)
+  6: {
+    wave: 6,
+    stage: 2,
+    stageLabel: 'Stage 2 · Firewall Breach',
+    title: 'Wave 6 — Serangan Terkoordinasi',
+    subtitle: '8 Packet Phantom · 4 Trojan Juggernaut',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'packet_wisp', count: 8, spawnInterval: 0.78 },
+      { enemyId: 'trojan_brute', count: 4, spawnInterval: 1.55 },
+    ],
+  },
+  7: {
+    wave: 7,
+    stage: 2,
+    stageLabel: 'Stage 2 · Firewall Breach',
+    title: 'Wave 7 — Banjir DDoS Swarm',
+    subtitle: '20 Zero-Day Worm · 6 Packet Phantom',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'worm_swarm', count: 20, spawnInterval: 0.36 },
+      { enemyId: 'packet_wisp', count: 6, spawnInterval: 0.82 },
+    ],
+  },
+  8: {
+    wave: 8,
+    stage: 2,
+    stageLabel: 'Stage 2 · Firewall Breach',
+    title: 'Wave 8 — Konvoi Lapis Baja',
+    subtitle: '6 Trojan Juggernaut · 10 Bit-Crawler',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'trojan_brute', count: 3, spawnInterval: 1.45 },
+      { enemyId: 'bit_crawler', count: 10, spawnInterval: 0.65 },
+      { enemyId: 'trojan_brute', count: 3, spawnInterval: 1.45 },
+    ],
+  },
+  9: {
+    wave: 9,
+    stage: 2,
+    stageLabel: 'Stage 2 · Firewall Breach',
+    title: 'Wave 9 — Penetrasi Cepat',
+    subtitle: '12 Packet Phantom · 5 Trojan · 12 Worm',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'worm_swarm', count: 12, spawnInterval: 0.35 },
+      { enemyId: 'trojan_brute', count: 5, spawnInterval: 1.35 },
+      { enemyId: 'packet_wisp', count: 12, spawnInterval: 0.65 },
+    ],
+  },
+  10: {
+    wave: 10,
+    stage: 2,
+    stageLabel: 'Stage 2 · Mid-Boss',
+    title: 'Wave 10 — MID-BOSS: Firewall Breaker',
+    subtitle: '1 Firewall Breaker + 5 Trojan + 8 Phantom',
+    isBossWave: true,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'trojan_brute', count: 2, spawnInterval: 1.2 },
+      { enemyId: 'aegis_dreadnought', count: 1, spawnInterval: 2.0 },
+      { enemyId: 'packet_wisp', count: 8, spawnInterval: 0.65 },
+      { enemyId: 'trojan_brute', count: 3, spawnInterval: 1.25 },
+    ],
+  },
+
+  // STAGE 3: KERNEL OVERLOAD (High economy & Max-Level Ultimate showcase)
+  11: {
+    wave: 11,
+    stage: 3,
+    stageLabel: 'Stage 3 · Kernel Overload',
+    title: 'Wave 11 — Gelombang Siber Massal',
+    subtitle: '24 Zero-Day Worm · 6 Trojan Juggernaut',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'worm_swarm', count: 24, spawnInterval: 0.28 },
+      { enemyId: 'trojan_brute', count: 6, spawnInterval: 1.15 },
+    ],
+  },
+  12: {
+    wave: 12,
+    stage: 3,
+    stageLabel: 'Stage 3 · Kernel Overload',
+    title: 'Wave 12 — Skuadron Phantom & Crawler',
+    subtitle: '14 Packet Phantom · 14 Bit-Crawler · 5 Trojan',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'packet_wisp', count: 14, spawnInterval: 0.52 },
+      { enemyId: 'trojan_brute', count: 5, spawnInterval: 1.15 },
+      { enemyId: 'bit_crawler', count: 14, spawnInterval: 0.45 },
+    ],
+  },
+  13: {
+    wave: 13,
+    stage: 3,
+    stageLabel: 'Stage 3 · Kernel Overload',
+    title: 'Wave 13 — Dobel Dreadnought',
+    subtitle: '2 Firewall Breaker · 12 Zero-Day Worm',
+    isBossWave: true,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'worm_swarm', count: 12, spawnInterval: 0.32 },
+      { enemyId: 'aegis_dreadnought', count: 1, spawnInterval: 2.5 },
+      { enemyId: 'trojan_brute', count: 4, spawnInterval: 1.1 },
+      { enemyId: 'aegis_dreadnought', count: 1, spawnInterval: 2.0 },
+    ],
+  },
+  14: {
+    wave: 14,
+    stage: 3,
+    stageLabel: 'Stage 3 · Kernel Overload',
+    title: 'Wave 14 — Pengawal Rootkit',
+    subtitle: '10 Trojan · 16 Packet Phantom · 20 Worm',
+    isBossWave: false,
+    isFinalStage: false,
+    entries: [
+      { enemyId: 'trojan_brute', count: 5, spawnInterval: 0.95 },
+      { enemyId: 'worm_swarm', count: 20, spawnInterval: 0.24 },
+      { enemyId: 'packet_wisp', count: 16, spawnInterval: 0.48 },
+      { enemyId: 'trojan_brute', count: 5, spawnInterval: 0.95 },
+    ],
+  },
+
+  // FINAL STAGE (WAVE 15): OMEGA-0 ROOTKIT + FULL CYBER ESCORT
+  15: {
+    wave: 15,
+    stage: 4,
+    stageLabel: 'FINAL STAGE · OMEGA INVASION',
+    title: 'FINAL STAGE — OMEGA-0 ROOTKIT OVERLORD',
+    subtitle: '1 FINAL BOSS OMEGA-0 + Pasukan Pengawal Siber Penuh',
+    isBossWave: true,
+    isFinalStage: true,
+    entries: [
+      { enemyId: 'trojan_brute', count: 4, spawnInterval: 0.95 },
+      { enemyId: 'worm_swarm', count: 14, spawnInterval: 0.25 },
+      { enemyId: 'omega_overlord', count: 1, spawnInterval: 2.6 },
+      { enemyId: 'packet_wisp', count: 12, spawnInterval: 0.5 },
+      { enemyId: 'aegis_dreadnought', count: 1, spawnInterval: 2.2 },
+      { enemyId: 'trojan_brute', count: 4, spawnInterval: 1.0 },
+      { enemyId: 'worm_swarm', count: 14, spawnInterval: 0.28 },
     ],
   },
 };
 
+export function getWaveDefinition(waveNumber: number): WaveDefinition | undefined {
+  return WAVE_DEFINITIONS[waveNumber];
+}
+
 export function getWaveComposition(waveNumber: number): WaveEntry[] {
-  return WAVE_INFO[waveNumber]?.entries ?? [];
+  return WAVE_DEFINITIONS[waveNumber]?.entries ?? [];
 }

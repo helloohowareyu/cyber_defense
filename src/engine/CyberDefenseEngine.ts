@@ -1,10 +1,10 @@
-// Cyber Defense 3D — Core WebGL2 / Three.js Engine
-// Integrates:
-// - Nur's 3D Map, Cubic Bezier Path, BaseMusuh, BaseUtama, and 9 Road-Snapped Slots
-// - Yusuf's CombatMath, TargetSelector, Procedural BufferGeometry, and 3 Custom GLSL Shaders
-// - Abiyu's Wave & Core Game State Machine
-// - Zulfan's Economy, Upgrade/Sell, Audio, and Local Persistence
-// Fully offline, zero external assets, software-WebGL safe (afterDraw pacing + RoomEnvironment).
+// Cyber Defense 3D — Upgraded BTD6-Inspired WebGL2 / Three.js Engine
+// Features:
+// - Free Tower Placement anywhere on Nur's expanded 40x24 Cyber Arena + 9 Overclock Bonus Pads (+15% RNG / +12% SPD)
+// - 6 Cyber Towers (Laser, Cannon, Cryo, Railgun, Tesla Chain-Lightning, Quantum Data Farm) with Lv.1-4 Evolution
+// - Max-Level (Lv.4 APEX) Active Ultimates with Cooldowns, Hotkeys [Q/W/E/R/T/Y], and 3D VFX
+// - 6 Cyber-Themed Enemies across 15 Waves (3 Stages + Final Stage Boss OMEGA-0 Rootkit with Escort)
+// - 1x / 2x / 3x Speed, Auto-Start Wave, Adaptive Offline Synthwave Music, and CIF65116 Lab Grafika Controls
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -15,6 +15,7 @@ import {
   EnemyType,
   GamePhase,
   getWaveComposition,
+  getWaveDefinition,
   MAX_TOWER_LEVEL,
   STARTING_CORE_HP,
   STARTING_GOLD,
@@ -31,12 +32,23 @@ import {
   computeTurretYaw,
   distanceXZ,
   getEnemySpeedMps,
+  getScaledChainCount,
   getScaledDamage,
+  getScaledFarmDividend,
+  getScaledFarmPacket,
+  getScaledFireRate,
   getScaledRangeGdd,
   getScaledRangeMeters,
   getWaveClearBonus,
 } from '../game/combatMath';
-import { NUR_BAKED_PATH, NUR_TOWER_SLOTS } from '../game/nurMapData';
+import {
+  NUR_BAKED_PATH,
+  NUR_BASE_MUSUH_POS,
+  NUR_BASE_UTAMA_POS,
+  NUR_TOWER_SLOTS,
+  TOWER_FOOTPRINT_RADIUS,
+  validateTowerPlacement,
+} from '../game/nurMapData';
 import { selectTarget } from '../game/targetSelector';
 import { audioSynth } from '../game/audioSynth';
 import {
@@ -55,23 +67,42 @@ import {
 } from './shaders';
 import { buildNurArena, NurArenaHandles } from './nurArenaBuilder';
 
+export interface ActiveAbilitySnapshot {
+  towerId: number;
+  towerType: TowerType;
+  abilityName: string;
+  hotkey: string;
+  description: string;
+  cooldownRemaining: number;
+  cooldownTotal: number;
+  activeRemaining: number;
+  ready: boolean;
+  accentHex: string;
+}
+
 export interface SelectedTowerSnapshot {
   id: number;
-  slotId: number;
-  slotName: string;
+  overclocked: boolean;
+  locationLabel: string;
   type: TowerType;
   displayName: string;
+  tierName: string;
   level: number;
   damage: number;
   rangeGdd: number;
   rangeMeters: number;
   fireRateSec: number;
+  farmPacketGold: number;
+  farmWaveDividend: number;
+  chainCount: number;
   targetingMode: TargetingMode;
   totalInvested: number;
   upgradeCost: number;
   sellRefund: number;
   kills: number;
+  goldEarned: number;
   accentHex: string;
+  ultimate: ActiveAbilitySnapshot | null;
 }
 
 export interface GraphicsLabState {
@@ -100,29 +131,36 @@ export interface HudSnapshot {
   maxCoreHp: number;
   wave: number;
   totalWaves: number;
+  stageLabel: string;
   waveActive: boolean;
+  autoStartWave: boolean;
   enemiesRemaining: number;
   enemiesDefeated: number;
   score: number;
-  timeScale: 1 | 2;
-  activeBuildType: TowerType;
-  selectedSlotId: number | null;
+  timeScale: 1 | 2 | 3;
+  activeBuildType: TowerType | null;
+  selectedTowerId: number | null;
   selectedTower: SelectedTowerSnapshot | null;
-  bossStatus: { name: string; hp: number; maxHp: number } | null;
+  abilities: ActiveAbilitySnapshot[];
+  bossStatus: { name: string; role: string; hp: number; maxHp: number; isFinalBoss: boolean } | null;
   bannerMessage: string | null;
   graphics: GraphicsLabState;
 }
 
 interface TowerEntity {
   id: number;
-  slotId: number;
+  overclockPadId: number | null;
   type: TowerType;
   level: number;
   totalInvested: number;
   targetingMode: TargetingMode;
   cooldown: number;
+  farmTimer: number;
   recoil: number;
   kills: number;
+  goldEarned: number;
+  ultimateCooldown: number;
+  ultimateActiveTimer: number;
   position: THREE.Vector3;
   rig: TowerRig;
   rangeRingMesh: THREE.Mesh;
@@ -145,11 +183,13 @@ interface EnemyEntity {
   rewardGold: number;
   leakDamage: number;
   isBoss: boolean;
+  isFinalBoss: boolean;
   isFlying: boolean;
   distanceTraveled: number;
   pathProgress: number;
   slowTimer: number;
   slowRatio: number;
+  stunTimer: number;
   hitFlashTimer: number;
   position: THREE.Vector3;
   rig: EnemyRig;
@@ -181,7 +221,7 @@ interface ShockwaveVfx {
   maxScale: number;
 }
 
-interface RailTrailVfx {
+interface BeamTrailVfx {
   mesh: THREE.Mesh;
   mat: THREE.MeshBasicMaterial;
   age: number;
@@ -198,7 +238,7 @@ interface ParticleSlot {
   color: THREE.Color;
 }
 
-const PARTICLE_POOL_SIZE = 180;
+const PARTICLE_POOL_SIZE = 240;
 
 function detectSoftwareWebGL(): boolean {
   try {
@@ -244,17 +284,21 @@ export class CyberDefenseEngine {
   private enemies: EnemyEntity[] = [];
   private projectiles: ProjectileEntity[] = [];
   private shockwaves: ShockwaveVfx[] = [];
-  private railTrails: RailTrailVfx[] = [];
+  private beamTrails: BeamTrailVfx[] = [];
 
-  // Pooled particles (zero GC in render loop)
+  // Pooled InstancedMesh particles (zero GC in render loop)
   private particleMesh: THREE.InstancedMesh;
   private particles: ParticleSlot[] = [];
   private particleCursor = 0;
 
-  // Hover build preview ring
+  // Free-Placement Live Ghost & Range Preview
   private previewRingMesh: THREE.Mesh;
   private previewRingMat: THREE.ShaderMaterial;
-  private hoveredSlotId: number | null = null;
+  private ghostFootprintMesh: THREE.Mesh;
+  private ghostFootprintMat: THREE.MeshBasicMaterial;
+  private hoverWorldPos: THREE.Vector3 | null = null;
+  private hoverValid = false;
+  private hoverOverclockPadId: number | null = null;
 
   // Simulation State
   private phase: GamePhase = 'title';
@@ -262,13 +306,15 @@ export class CyberDefenseEngine {
   private coreHp = STARTING_CORE_HP;
   private wave = 0;
   private waveActive = false;
+  private autoStartWave = false;
+  private autoStartTimer = 0;
   private spawnQueue: { enemyId: EnemyType; delay: number }[] = [];
   private spawnTimer = 0;
   private enemiesDefeated = 0;
   private score = 0;
-  private timeScale: 1 | 2 = 1;
-  private activeBuildType: TowerType = 'laser';
-  private selectedSlotId: number | null = null;
+  private timeScale: 1 | 2 | 3 = 1;
+  private activeBuildType: TowerType | null = 'laser';
+  private selectedTowerId: number | null = null;
   private bannerMessage: string | null = null;
   private bannerTimer = 0;
 
@@ -282,15 +328,15 @@ export class CyberDefenseEngine {
   private showAllRangeRings = false;
   private cameraPreset: CameraPreset = 'tactical';
 
-  // Camera rig (damped spherical orbit + pan target)
-  private camTarget = new THREE.Vector3(0, 0.4, 0.2);
-  private camTargetGoal = new THREE.Vector3(0, 0.4, 0.2);
+  // Camera rig (calibrated for 40x24 expanded arena)
+  private camTarget = new THREE.Vector3(0, 0.4, 0.4);
+  private camTargetGoal = new THREE.Vector3(0, 0.4, 0.4);
   private camYaw = 0;
   private camYawGoal = 0;
-  private camPitch = 0.86;
-  private camPitchGoal = 0.86;
-  private camDist = 27.5;
-  private camDistGoal = 27.5;
+  private camPitch = 0.88;
+  private camPitchGoal = 0.88;
+  private camDist = 33.8;
+  private camDistGoal = 33.8;
   private trauma = 0;
   private hitstopTimer = 0;
   private defeatDelayTimer = 0;
@@ -313,14 +359,14 @@ export class CyberDefenseEngine {
   private hudSyncAccum = 0;
   private resizeObserver: ResizeObserver;
 
-  // Scratch vectors/matrices (zero GC inside tick)
+  // Scratch math objects
   private readonly _v1 = new THREE.Vector3();
-  private readonly _v2 = new THREE.Vector3();
   private readonly _v3 = new THREE.Vector3();
   private readonly _mat4 = new THREE.Matrix4();
   private readonly _quat = new THREE.Quaternion();
   private readonly _scale = new THREE.Vector3();
   private readonly _up = new THREE.Vector3(0, 1, 0);
+  private readonly _xAxis = new THREE.Vector3(1, 0, 0);
 
   constructor(
     container: HTMLElement,
@@ -342,14 +388,13 @@ export class CyberDefenseEngine {
     const height = Math.max(1, container.clientHeight);
     const aspect = width / height;
 
-    // Renderer configured per Three.js studio PBR + Software WebGL spec
     this.renderer = new THREE.WebGLRenderer({
       antialias: !this.isSoftwareGl,
       powerPreference: 'high-performance',
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 1.1;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(width, height);
     this.renderer.shadowMap.enabled = this.shadowsEnabled;
@@ -360,70 +405,65 @@ export class CyberDefenseEngine {
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
 
-    // Scene & Horizon-matched Atmospheric Fog
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x050b18);
-    this.scene.fog = new THREE.FogExp2(0x050b18, 0.0115);
+    this.scene.fog = new THREE.FogExp2(0x050b18, 0.0095);
 
-    // Mandatory Procedural Studio IBL Environment Map (RoomEnvironment)
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
 
-    // Cameras (Perspective + Orthographic for CPMK Bahan Kajian 5)
-    this.perspCamera = new THREE.PerspectiveCamera(44, aspect, 0.5, 160);
-    const orthoHalfH = 12.5;
+    this.perspCamera = new THREE.PerspectiveCamera(44, aspect, 0.5, 190);
+    const orthoHalfH = 15.2;
     this.orthoCamera = new THREE.OrthographicCamera(
       -orthoHalfH * aspect,
       orthoHalfH * aspect,
       orthoHalfH,
       -orthoHalfH,
       0.5,
-      160
+      190
     );
 
-    // Balanced 3-Point Warm/Cool Studio Lighting Rig
+    // 3-Point Warm/Cool Studio Lighting Rig
     const hemiLight = new THREE.HemisphereLight(0x8fd4ff, 0x0b152a, 0.95);
     this.scene.add(hemiLight);
 
     this.keyLight = new THREE.DirectionalLight(0xfff0d8, 1.85);
-    this.keyLight.position.set(14, 24, 15);
+    this.keyLight.position.set(16, 28, 18);
     this.keyLight.castShadow = this.shadowsEnabled;
     this.keyLight.shadow.mapSize.set(1024, 1024);
     this.keyLight.shadow.camera.near = 2;
-    this.keyLight.shadow.camera.far = 65;
-    this.keyLight.shadow.camera.left = -22;
-    this.keyLight.shadow.camera.right = 22;
-    this.keyLight.shadow.camera.top = 15;
-    this.keyLight.shadow.camera.bottom = -15;
+    this.keyLight.shadow.camera.far = 80;
+    this.keyLight.shadow.camera.left = -26;
+    this.keyLight.shadow.camera.right = 26;
+    this.keyLight.shadow.camera.top = 18;
+    this.keyLight.shadow.camera.bottom = -18;
     this.keyLight.shadow.bias = -0.0005;
     this.keyLight.shadow.normalBias = 0.02;
     this.scene.add(this.keyLight);
 
     const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.85);
-    rimLight.position.set(-16, 12, -14);
+    rimLight.position.set(-18, 14, -16);
     this.scene.add(rimLight);
 
-    // Subtle Base accent point lights (2 total, well under budget)
-    const enemyBaseLight = new THREE.PointLight(0xff1e42, 4.5, 12, 1.6);
-    enemyBaseLight.position.set(-14.0, 3.2, 0);
+    // Base accent lights positioned for expanded 40x24 arena
+    const enemyBaseLight = new THREE.PointLight(0xff1744, 4.2, 14, 1.6);
+    enemyBaseLight.position.set(NUR_BASE_MUSUH_POS.x + 0.5, 3.2, 0);
     this.scene.add(enemyBaseLight);
 
-    const coreBaseLight = new THREE.PointLight(0x00f0ff, 5.0, 13, 1.6);
-    coreBaseLight.position.set(13.8, 3.4, 0);
+    const coreBaseLight = new THREE.PointLight(0x00d8ff, 4.6, 15, 1.6);
+    coreBaseLight.position.set(NUR_BASE_UTAMA_POS.x - 0.5, 3.4, 0);
     this.scene.add(coreBaseLight);
 
-    // Build Nur's Faithful 3D Arena
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.arena = buildNurArena(maxAniso);
     this.scene.add(this.arena.root);
     this.scene.add(this.entityRoot);
 
-    // Shared procedural textures
     this.laserPulseTex = createLaserPulseTexture();
     this.contactShadowTex = createContactShadowTexture();
 
-    // Pooled InstancedMesh Particles (zero GC)
+    // Pooled InstancedMesh Particles
     const pGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
     const pMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.particleMesh = new THREE.InstancedMesh(pGeo, pMat, PARTICLE_POOL_SIZE);
@@ -446,7 +486,7 @@ export class CyberDefenseEngine {
     }
     this.particleMesh.instanceMatrix.needsUpdate = true;
 
-    // Hover build preview range ring
+    // Live Free-Placement Range Ring + Footprint Hologram Disc
     this.previewRingMat = createRangeRingMaterial({ pulseSpeed: 1.5, pulseStrength: 0.28, fade: 0.9 });
     this.previewRingMesh = new THREE.Mesh(
       buildRangeRingGeometry(0.6, getScaledRangeMeters(TOWER_PRESETS.laser.baseRangeGdd, 1), 48),
@@ -455,11 +495,23 @@ export class CyberDefenseEngine {
     this.previewRingMesh.visible = false;
     this.scene.add(this.previewRingMesh);
 
+    this.ghostFootprintMat = new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+    });
+    this.ghostFootprintMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(TOWER_FOOTPRINT_RADIUS, TOWER_FOOTPRINT_RADIUS, 0.24, 16),
+      this.ghostFootprintMat
+    );
+    this.ghostFootprintMesh.visible = false;
+    this.scene.add(this.ghostFootprintMesh);
+
     if (!this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.perspCamera);
     }
 
-    // Bind events
     this.bindEvents();
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this.container);
@@ -493,6 +545,7 @@ export class CyberDefenseEngine {
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
     this.resizeObserver.disconnect();
+    audioSynth.stopMusic();
 
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointermove', this.handlePointerMove);
@@ -559,6 +612,8 @@ export class CyberDefenseEngine {
     else if (key === '2') this.setActiveBuildType('cannon');
     else if (key === '3') this.setActiveBuildType('freeze');
     else if (key === '4') this.setActiveBuildType('armor_pen');
+    else if (key === '5') this.setActiveBuildType('tesla');
+    else if (key === '6') this.setActiveBuildType('farm');
     else if (key === ' ') {
       e.preventDefault();
       if (!this.waveActive && this.wave < TOTAL_WAVES) this.startNextWave();
@@ -568,6 +623,17 @@ export class CyberDefenseEngine {
       this.sellSelectedTower();
     } else if (key === 'o') {
       this.setProjection(this.activeProjection === 'perspective' ? 'orthographic' : 'perspective');
+    } else if (['q', 'e', 'r', 't', 'y', 'f'].includes(key)) {
+      // Trigger matching ready Ultimate ability if any Lv.4 tower owns that hotkey!
+      const match = this.towers.find(
+        (t) =>
+          t.level >= MAX_TOWER_LEVEL &&
+          t.ultimateCooldown <= 0 &&
+          TOWER_PRESETS[t.type].ultimate.hotkey.toLowerCase() === key
+      );
+      if (match) {
+        this.triggerTowerUltimate(match.id);
+      }
     }
   };
 
@@ -589,32 +655,65 @@ export class CyberDefenseEngine {
       this.lastDragX = e.clientX;
       this.lastDragY = e.clientY;
       this.camYawGoal -= dx * 0.0055;
-      this.camPitchGoal = THREE.MathUtils.clamp(this.camPitchGoal + dy * 0.0045, 0.42, 1.38);
+      this.camPitchGoal = THREE.MathUtils.clamp(this.camPitchGoal + dy * 0.0045, 0.44, 1.4);
       return;
     }
 
     if (this.phase !== 'playing') return;
     const now = performance.now();
-    if (now - this.lastPointerMoveRaycast < 35) return;
+    if (now - this.lastPointerMoveRaycast < 30) return;
     this.lastPointerMoveRaycast = now;
 
     this.updatePointerNdc(e.clientX, e.clientY);
     this.raycaster.setFromCamera(this.pointerNdc, this.activeCamera);
-    const hits = this.raycaster.intersectObjects(this.arena.slotHitMeshes, false);
 
-    if (hits.length > 0) {
-      const slotId = hits[0].object.userData.slotId as number;
-      this.hoveredSlotId = slotId;
-      this.renderer.domElement.style.cursor = 'pointer';
+    // 1. Check if hovering over an existing tower
+    const towerHitMeshes = this.towers.map((t) => t.rig.hitMesh);
+    if (towerHitMeshes.length > 0) {
+      const tHits = this.raycaster.intersectObjects(towerHitMeshes, false);
+      if (tHits.length > 0) {
+        this.hoverWorldPos = null;
+        this.hoverValid = false;
+        this.hoverOverclockPadId = null;
+        this.renderer.domElement.style.cursor = 'pointer';
+        this.refreshPreviewAndSlots();
+        return;
+      }
+    }
+
+    // 2. If in build placement mode, raycast Nur's open 40x24 floor plane for Free Placement!
+    if (this.activeBuildType) {
+      const fHits = this.raycaster.intersectObject(this.arena.floorHitMesh, false);
+      if (fHits.length > 0) {
+        const pt = fHits[0].point;
+        const val = validateTowerPlacement(
+          { x: pt.x, y: 0, z: pt.z },
+          this.towers.map((t) => t.position)
+        );
+        this.hoverWorldPos = new THREE.Vector3(val.snappedPosition.x, 0, val.snappedPosition.z);
+        this.hoverValid = val.valid && this.gold >= TOWER_PRESETS[this.activeBuildType].baseCost;
+        this.hoverOverclockPadId = val.overclockPadId;
+        this.renderer.domElement.style.cursor = this.hoverValid ? 'crosshair' : 'not-allowed';
+      } else {
+        this.hoverWorldPos = null;
+        this.hoverValid = false;
+        this.hoverOverclockPadId = null;
+        this.renderer.domElement.style.cursor = 'default';
+      }
     } else {
-      this.hoveredSlotId = null;
+      this.hoverWorldPos = null;
+      this.hoverValid = false;
+      this.hoverOverclockPadId = null;
       this.renderer.domElement.style.cursor = 'default';
     }
+
     this.refreshPreviewAndSlots();
   };
 
   private handlePointerDown = (e: PointerEvent) => {
     if (this.phase !== 'playing') return;
+    audioSynth.startMusic();
+
     if (e.button === 2 || e.button === 1) {
       this.isRightDragging = true;
       this.lastDragX = e.clientX;
@@ -625,17 +724,36 @@ export class CyberDefenseEngine {
 
     this.updatePointerNdc(e.clientX, e.clientY);
     this.raycaster.setFromCamera(this.pointerNdc, this.activeCamera);
-    const hits = this.raycaster.intersectObjects(this.arena.slotHitMeshes, false);
 
-    if (hits.length > 0) {
-      const slotId = hits[0].object.userData.slotId as number;
-      this.handleSlotClick(slotId);
-    } else {
-      if (this.selectedSlotId !== null) {
-        this.selectedSlotId = null;
+    // 1. Click existing tower to inspect/upgrade/sell/trigger ultimate
+    const towerHitMeshes = this.towers.map((t) => t.rig.hitMesh);
+    if (towerHitMeshes.length > 0) {
+      const tHits = this.raycaster.intersectObjects(towerHitMeshes, false);
+      if (tHits.length > 0) {
+        const clickedTowerId = tHits[0].object.userData.towerId as number;
+        this.selectedTowerId = this.selectedTowerId === clickedTowerId ? null : clickedTowerId;
+        audioSynth.playUiClick();
         this.refreshPreviewAndSlots();
         this.emitHudSnapshot();
+        return;
       }
+    }
+
+    // 2. Otherwise, if a tower type is selected for building, freely place it on the floor!
+    if (this.activeBuildType) {
+      const fHits = this.raycaster.intersectObject(this.arena.floorHitMesh, false);
+      if (fHits.length > 0) {
+        const pt = fHits[0].point;
+        const placed = this.buildTowerAtWorldPos(pt.x, pt.z, this.activeBuildType);
+        if (placed) return;
+      }
+    }
+
+    // 3. Clicking empty invalid area deselects currently selected tower
+    if (this.selectedTowerId !== null) {
+      this.selectedTowerId = null;
+      this.refreshPreviewAndSlots();
+      this.emitHudSnapshot();
     }
   };
 
@@ -646,7 +764,7 @@ export class CyberDefenseEngine {
   private handleWheel = (e: WheelEvent) => {
     if (this.phase !== 'playing') return;
     e.preventDefault();
-    this.camDistGoal = THREE.MathUtils.clamp(this.camDistGoal + e.deltaY * 0.014, 15, 38);
+    this.camDistGoal = THREE.MathUtils.clamp(this.camDistGoal + e.deltaY * 0.016, 17, 46);
   };
 
   // =========================================================================
@@ -659,14 +777,17 @@ export class CyberDefenseEngine {
     this.coreHp = STARTING_CORE_HP;
     this.wave = 0;
     this.waveActive = false;
+    this.autoStartTimer = 0;
     this.spawnQueue = [];
     this.spawnTimer = 0;
     this.enemiesDefeated = 0;
     this.score = 0;
     this.timeScale = 1;
     this.activeBuildType = 'laser';
-    this.selectedSlotId = null;
-    this.hoveredSlotId = null;
+    this.selectedTowerId = null;
+    this.hoverWorldPos = null;
+    this.hoverValid = false;
+    this.hoverOverclockPadId = null;
     this.pendingOutcome = null;
     this.defeatDelayTimer = 0;
     this.trauma = 0;
@@ -674,7 +795,10 @@ export class CyberDefenseEngine {
     this.keysPressed.clear();
     this.phase = 'playing';
     this.setCameraPreset('tactical');
-    this.showBanner('Bangun menara di slot bercahaya, lalu tekan Start Wave');
+    audioSynth.startMusic();
+    audioSynth.setMusicMood('idle');
+    this.showBanner('Klik bebas di arena untuk bangun menara · Node Emas (+) beri bonus Overclock!');
+    this.rebuildPreviewRingGeometry(false);
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
   }
@@ -682,10 +806,12 @@ export class CyberDefenseEngine {
   public returnToTitle(): void {
     this.clearEntities();
     this.phase = 'title';
-    this.selectedSlotId = null;
-    this.hoveredSlotId = null;
+    this.selectedTowerId = null;
+    this.hoverWorldPos = null;
     this.previewRingMesh.visible = false;
+    this.ghostFootprintMesh.visible = false;
     this.keysPressed.clear();
+    audioSynth.setMusicMood('idle');
     this.emitHudSnapshot();
   }
 
@@ -693,27 +819,45 @@ export class CyberDefenseEngine {
     if (this.phase !== 'playing' && this.phase !== 'paused') return;
     this.phase = paused ? 'paused' : 'playing';
     this.keysPressed.clear();
+    if (paused) audioSynth.setMusicMood('idle');
+    else this.syncMusicMood();
     this.emitHudSnapshot();
   }
 
-  public setTimeScale(scale: 1 | 2): void {
+  public setTimeScale(scale: 1 | 2 | 3): void {
     this.timeScale = scale;
     audioSynth.playUiClick();
     this.emitHudSnapshot();
   }
 
-  public setActiveBuildType(type: TowerType): void {
-    this.activeBuildType = type;
+  public setAutoStartWave(enabled: boolean): void {
+    this.autoStartWave = enabled;
     audioSynth.playUiClick();
-    this.rebuildPreviewRingGeometry();
+    if (enabled && !this.waveActive && this.wave > 0 && this.wave < TOTAL_WAVES) {
+      this.autoStartTimer = 1.4;
+    }
+    this.emitHudSnapshot();
+  }
+
+  public setActiveBuildType(type: TowerType | null): void {
+    this.activeBuildType = type;
+    if (type !== null) {
+      this.selectedTowerId = null;
+    }
+    audioSynth.playUiClick();
+    this.rebuildPreviewRingGeometry(false);
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
   }
 
   public startNextWave(): void {
     if (this.phase !== 'playing' || this.waveActive || this.wave >= TOTAL_WAVES) return;
+    audioSynth.startMusic();
     this.wave += 1;
     this.waveActive = true;
+    this.autoStartTimer = 0;
+
+    const def = getWaveDefinition(this.wave);
     const comp = getWaveComposition(this.wave);
     this.spawnQueue = [];
     for (const entry of comp) {
@@ -725,39 +869,67 @@ export class CyberDefenseEngine {
       }
     }
     this.spawnTimer = 0.2;
-    const isBossWave = this.wave === TOTAL_WAVES;
+
+    const isBossWave = Boolean(def?.isBossWave);
     audioSynth.playWaveStart(isBossWave);
-    if (isBossWave) {
-      this.trauma = Math.min(1, this.trauma + 0.45);
-      this.showBanner('PERINGATAN: Boss Demon King memasuki sektor!');
+    this.syncMusicMood();
+
+    if (def?.isFinalStage) {
+      this.trauma = Math.min(1, this.trauma + 0.55);
+      this.showBanner('FINAL STAGE: OMEGA-0 Rootkit & Pasukan Pengawal Siber memasuki arena!');
+    } else if (isBossWave) {
+      this.trauma = Math.min(1, this.trauma + 0.35);
+      this.showBanner(`PERINGATAN BOSS: ${def?.title ?? `Wave ${this.wave}`}!`);
     } else {
-      this.showBanner(`Wave ${this.wave} dimulai!`);
+      this.showBanner(`${def?.title ?? `Wave ${this.wave}`} dimulai!`);
     }
     this.emitHudSnapshot();
   }
 
-  public buildTowerOnSlot(slotId: number, type: TowerType): boolean {
+  public buildTowerAtWorldPos(worldX: number, worldZ: number, type: TowerType): boolean {
     if (this.phase !== 'playing') return false;
-    const slot = NUR_TOWER_SLOTS[slotId];
-    if (!slot) return false;
-    if (this.towers.some((t) => t.slotId === slotId)) return false;
-
     const preset = TOWER_PRESETS[type];
     if (this.gold < preset.baseCost) {
       this.showBanner(`Gold tidak cukup! Butuh ${preset.baseCost}G untuk ${preset.displayName}`);
       return false;
     }
 
+    const val = validateTowerPlacement(
+      { x: worldX, y: 0, z: worldZ },
+      this.towers.map((t) => t.position)
+    );
+    if (!val.valid) {
+      const msg =
+        val.reason === 'on_road'
+          ? 'Tidak bisa membangun di atas jalur musuh!'
+          : val.reason === 'tower_overlap'
+          ? 'Terlalu dekat dengan menara lain!'
+          : val.reason === 'near_base'
+          ? 'Terlalu dekat dengan Base Musuh / Energy Core!'
+          : 'Pilih lokasi di dalam area arena cyber!';
+      this.showBanner(msg);
+      return false;
+    }
+
+    const pos = val.snappedPosition;
+    const overclocked = val.overclockPadId !== null;
     this.gold -= preset.baseCost;
+
     const rig = buildTowerRig(type);
-    rig.root.position.set(slot.position.x, 0.08, slot.position.z);
-    rig.turretHead.rotation.y = slot.yaw;
+    const towerId = this.nextTowerId++;
+    rig.hitMesh.userData = { towerId };
+    rig.root.position.set(pos.x, overclocked ? 0.09 : 0.02, pos.z);
+
+    // Orient newly placed tower to face nearest road point cleanly
+    if (overclocked && val.overclockPadId !== null) {
+      rig.turretHead.rotation.y = NUR_TOWER_SLOTS[val.overclockPadId].yaw;
+    }
     this.entityRoot.add(rig.root);
 
-    const rangeMeters = getScaledRangeMeters(preset.baseRangeGdd, 1);
-    const rgb = new THREE.Color(preset.accentColor);
+    const rangeMeters = getScaledRangeMeters(preset.baseRangeGdd, 1, overclocked);
+    const rgb = new THREE.Color(overclocked ? 0xfbbf24 : preset.accentColor);
     const ringGeo = buildRangeRingGeometry(
-      Math.max(0.65, rangeMeters - 0.35),
+      Math.max(0.6, rangeMeters - 0.35),
       rangeMeters,
       56,
       [rgb.r, rgb.g, rgb.b, 0.14],
@@ -765,7 +937,7 @@ export class CyberDefenseEngine {
     );
     const ringMat = createRangeRingMaterial({ pulseSpeed: 0.9, pulseStrength: 0.22, fade: 1.0 });
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.position.set(slot.position.x, 0.02, slot.position.z);
+    ringMesh.position.set(pos.x, 0.03, pos.z);
     ringMesh.visible = this.showAllRangeRings;
     this.entityRoot.add(ringMesh);
 
@@ -773,7 +945,6 @@ export class CyberDefenseEngine {
     let laserBeamMat: THREE.ShaderMaterial | undefined;
     if (type === 'laser') {
       laserBeamMat = createLaserBeamMaterial(this.laserPulseTex, preset.accentColor);
-      // Crossed two-plane ribbon so beam looks volumetric from all angles
       const beamGeo = new THREE.PlaneGeometry(1, 0.22);
       beamGeo.translate(0.5, 0, 0);
       laserBeamMesh = new THREE.Mesh(beamGeo, laserBeamMat);
@@ -785,16 +956,20 @@ export class CyberDefenseEngine {
     }
 
     const tower: TowerEntity = {
-      id: this.nextTowerId++,
-      slotId,
+      id: towerId,
+      overclockPadId: val.overclockPadId,
       type,
       level: 1,
       totalInvested: preset.baseCost,
-      targetingMode: 'FRONT_MOST',
-      cooldown: 0.15,
+      targetingMode: type === 'armor_pen' ? 'STRONG' : 'FIRST',
+      cooldown: 0.12,
+      farmTimer: preset.incomeCycleSec * 0.65,
       recoil: 0,
       kills: 0,
-      position: new THREE.Vector3(slot.position.x, 0.08, slot.position.z),
+      goldEarned: 0,
+      ultimateCooldown: 0,
+      ultimateActiveTimer: 0,
+      position: new THREE.Vector3(pos.x, overclocked ? 0.09 : 0.02, pos.z),
       rig,
       rangeRingMesh: ringMesh,
       rangeRingMat: ringMat,
@@ -804,18 +979,22 @@ export class CyberDefenseEngine {
     };
 
     this.towers.push(tower);
-    this.selectedSlotId = slotId;
-    audioSynth.playBuild();
-    this.spawnParticles(tower.position, 14, preset.accentColor, 3.2, 0.45);
-    this.pushFloatText(`-${preset.baseCost}G`, tower.position, '#fbbf24');
+    this.selectedTowerId = towerId;
+    audioSynth.playBuild(overclocked);
+    this.spawnParticles(tower.position, overclocked ? 20 : 14, overclocked ? 0xfbbf24 : preset.accentColor, 3.4, 0.48);
+    this.pushFloatText(
+      overclocked ? `-${preset.baseCost}G OVERCLOCK!` : `-${preset.baseCost}G`,
+      tower.position,
+      overclocked ? '#fde047' : '#fbbf24'
+    );
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
     return true;
   }
 
   public upgradeSelectedTower(): boolean {
-    if (this.phase !== 'playing' || this.selectedSlotId === null) return false;
-    const tower = this.towers.find((t) => t.slotId === this.selectedSlotId);
+    if (this.phase !== 'playing' || this.selectedTowerId === null) return false;
+    const tower = this.towers.find((t) => t.id === this.selectedTowerId);
     if (!tower || tower.level >= MAX_TOWER_LEVEL) return false;
 
     const preset = TOWER_PRESETS[tower.type];
@@ -829,34 +1008,42 @@ export class CyberDefenseEngine {
     tower.totalInvested += cost;
     tower.level += 1;
 
-    // Reveal level visual ornaments & slightly scale up stature
     if (tower.level >= 2 && tower.rig.upgradeNodes[0]) tower.rig.upgradeNodes[0].visible = true;
     if (tower.level >= 3 && tower.rig.upgradeNodes[1]) tower.rig.upgradeNodes[1].visible = true;
-    const scaleBoost = 1 + (tower.level - 1) * 0.06;
+    if (tower.level >= 4 && tower.rig.upgradeNodes[2]) tower.rig.upgradeNodes[2].visible = true;
+    const scaleBoost = 1 + (tower.level - 1) * 0.055;
     tower.rig.root.scale.setScalar(scaleBoost);
 
-    // Rebuild procedural range ring mesh for new +10% range
-    const newRange = getScaledRangeMeters(preset.baseRangeGdd, tower.level);
-    const rgb = new THREE.Color(preset.accentColor);
+    const overclocked = tower.overclockPadId !== null;
+    const newRange = getScaledRangeMeters(preset.baseRangeGdd, tower.level, overclocked);
+    const rgb = new THREE.Color(tower.level >= MAX_TOWER_LEVEL ? 0xfbbf24 : preset.accentColor);
     tower.rangeRingMesh.geometry.dispose();
     tower.rangeRingMesh.geometry = buildRangeRingGeometry(
-      Math.max(0.65, newRange - 0.35),
+      Math.max(0.6, newRange - 0.35),
       newRange,
       56,
       [rgb.r, rgb.g, rgb.b, 0.14],
-      [rgb.r, rgb.g, rgb.b, 0.78]
+      [rgb.r, rgb.g, rgb.b, 0.8]
     );
 
-    audioSynth.playUpgrade();
-    this.spawnParticles(tower.position, 18, 0xfbbf24, 4.0, 0.55);
-    this.pushFloatText(`LV.${tower.level}`, tower.position, '#38bdf8');
+    const unlockedUlt = tower.level === MAX_TOWER_LEVEL;
+    audioSynth.playUpgrade(unlockedUlt);
+    this.spawnParticles(tower.position, unlockedUlt ? 28 : 18, 0xfbbf24, 4.4, 0.6);
+    this.pushFloatText(
+      unlockedUlt ? `APEX LV.4 · ULTIMATE!` : `LV.${tower.level}`,
+      tower.position,
+      unlockedUlt ? '#fde047' : '#38bdf8'
+    );
+    if (unlockedUlt) {
+      this.showBanner(`ULTIMATE TERBUKA: [${preset.ultimate.hotkey}] ${preset.ultimate.name}!`);
+    }
     this.emitHudSnapshot();
     return true;
   }
 
   public sellSelectedTower(): boolean {
-    if (this.phase !== 'playing' || this.selectedSlotId === null) return false;
-    const idx = this.towers.findIndex((t) => t.slotId === this.selectedSlotId);
+    if (this.phase !== 'playing' || this.selectedTowerId === null) return false;
+    const idx = this.towers.findIndex((t) => t.id === this.selectedTowerId);
     if (idx < 0) return false;
 
     const tower = this.towers[idx];
@@ -869,10 +1056,10 @@ export class CyberDefenseEngine {
     if (tower.laserBeamMesh) this.entityRoot.remove(tower.laserBeamMesh);
 
     this.towers.splice(idx, 1);
-    this.selectedSlotId = null;
+    this.selectedTowerId = null;
 
     audioSynth.playSell();
-    this.spawnParticles(tower.position, 12, 0xfbbf24, 2.8, 0.4);
+    this.spawnParticles(tower.position, 14, 0xfbbf24, 3.0, 0.42);
     this.pushFloatText(`+${refund}G`, tower.position, '#4ade80');
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
@@ -880,21 +1067,117 @@ export class CyberDefenseEngine {
   }
 
   public setSelectedTowerTargeting(mode: TargetingMode): void {
-    if (this.selectedSlotId === null) return;
-    const tower = this.towers.find((t) => t.slotId === this.selectedSlotId);
+    if (this.selectedTowerId === null) return;
+    const tower = this.towers.find((t) => t.id === this.selectedTowerId);
     if (!tower) return;
     tower.targetingMode = mode;
     audioSynth.playUiClick();
     this.emitHudSnapshot();
   }
 
-  public selectSlot(slotId: number | null): void {
-    this.selectedSlotId = slotId;
+  public selectTower(towerId: number | null): void {
+    this.selectedTowerId = towerId;
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
   }
 
-  // Graphics Lab Controls (CPMK-1 & CPMK-2 interactive demonstrations)
+  /**
+   * Triggers a Max-Level (Lv.4 APEX) Tower's Active Ultimate Ability!
+   */
+  public triggerTowerUltimate(towerId: number): boolean {
+    if (this.phase !== 'playing') return false;
+    const tower = this.towers.find((t) => t.id === towerId);
+    if (!tower || tower.level < MAX_TOWER_LEVEL || tower.ultimateCooldown > 0) return false;
+
+    const preset = TOWER_PRESETS[tower.type];
+    tower.ultimateCooldown = preset.ultimate.cooldownSec;
+    tower.ultimateActiveTimer = preset.ultimate.durationSec;
+
+    audioSynth.playUltimate();
+    this.trauma = Math.min(1, this.trauma + 0.32);
+    this.spawnParticles(tower.position, 28, preset.accentColor, 5.2, 0.65);
+
+    const aliveEnemies = this.enemies.filter((e) => e.alive);
+
+    if (tower.type === 'laser') {
+      // PRISM OVERDRIVE: 2.6x fire rate + dual beam burst for 7s
+      this.showBanner(`ULTIMATE: ${preset.ultimate.name} aktif (7 detik)!`);
+      this.pushFloatText('PRISM OVERDRIVE!', tower.position, '#22d3ee');
+    } else if (tower.type === 'cannon') {
+      // ORBITAL EMP BARRAGE: 5 heavy EMP blasts along active enemies or road chokes
+      this.showBanner(`ULTIMATE: ${preset.ultimate.name} menghantam jalur!`);
+      const targets = aliveEnemies.slice(0, 5);
+      for (let i = 0; i < 5; i++) {
+        const blastPos =
+          targets[i]?.position.clone() ??
+          (() => {
+            const sample = NUR_BAKED_PATH.sampleAtDistance(((i + 1) / 6) * NUR_BAKED_PATH.totalLength).pos;
+            return new THREE.Vector3(sample.x, 0.15, sample.z);
+          })();
+        this.spawnShockwave(blastPos, 4.2, [1.0, 0.58, 0.18, 0.9], [1.0, 0.15, 0.05, 0.0]);
+        this.spawnParticles(blastPos, 22, 0xfb923c, 5.8, 0.62);
+        for (const e of aliveEnemies) {
+          if (e.alive && distanceXZ(blastPos, e.position) <= 4.2) {
+            e.stunTimer = Math.max(e.stunTimer, e.isBoss ? 0.6 : 1.4);
+            this.damageEnemy(e, 240, false, tower.id);
+          }
+        }
+      }
+    } else if (tower.type === 'freeze') {
+      // ABSOLUTE ZERO: Global 80% freeze for 5s + 50% armor shred!
+      this.showBanner(`ULTIMATE: ${preset.ultimate.name} — seluruh musuh membeku!`);
+      this.spawnShockwave(tower.position, 22.0, [0.49, 0.83, 0.99, 0.72], [0.22, 0.74, 0.97, 0.0]);
+      for (const e of aliveEnemies) {
+        e.slowRatio = Math.max(e.slowRatio, 0.8);
+        e.slowTimer = Math.max(e.slowTimer, 5.0);
+        e.armor = Math.floor(e.armor * 0.5);
+        this.damageEnemy(e, 65, true, tower.id, 0.8, 5.0);
+        this.spawnParticles(e.position, 10, 0x7dd3fc, 3.0, 0.5);
+      }
+    } else if (tower.type === 'armor_pen') {
+      // HYPER-RAIL LANCE: Locks onto strongest enemy / Boss for 520 True Damage!
+      const strongest = [...aliveEnemies].sort(
+        (a, b) => (b.isFinalBoss ? 1e6 : 0) + b.currentHp - ((a.isFinalBoss ? 1e6 : 0) + a.currentHp)
+      )[0];
+      if (strongest) {
+        const skyOrigin = new THREE.Vector3(strongest.position.x, 16, strongest.position.z);
+        this.spawnBeamSegment(skyOrigin, strongest.position, 0xff1744, 0.22, 0.45);
+        this.spawnShockwave(strongest.position, 3.4, [1.0, 0.2, 0.35, 0.95], [1.0, 0.05, 0.15, 0.0]);
+        this.spawnParticles(strongest.position, 30, 0xff1744, 6.2, 0.65);
+        this.damageEnemy(strongest, 520, true, tower.id);
+        this.showBanner(`ULTIMATE: Hyper-Rail menghantam ${ENEMY_PRESETS[strongest.type].displayName} (520 True DMG)!`);
+      } else {
+        this.showBanner('Hyper-Rail Lance ditembakkan — tidak ada target aktif.');
+      }
+    } else if (tower.type === 'tesla') {
+      // ION OVERLOAD STORM: Electrocutes up to 10 enemies across the map!
+      const struck = aliveEnemies.slice(0, 10);
+      let prevPos = tower.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+      for (const e of struck) {
+        const targetPos = e.position.clone().add(new THREE.Vector3(0, 0.7, 0));
+        this.spawnBeamSegment(prevPos, targetPos, 0xc084fc, 0.11, 0.36);
+        this.spawnParticles(targetPos, 10, 0xc084fc, 4.0, 0.4);
+        this.damageEnemy(e, 185, false, tower.id);
+        prevPos = targetPos;
+      }
+      this.showBanner(`ULTIMATE: ${preset.ultimate.name} menyambar ${struck.length} target!`);
+    } else if (tower.type === 'farm') {
+      // QUANTUM JACKPOT: Instant +300 Gold surge!
+      const bonus = 300;
+      this.gold += bonus;
+      tower.goldEarned += bonus;
+      audioSynth.playFarmIncome();
+      this.spawnShockwave(tower.position, 4.0, [0.2, 0.85, 0.6, 0.85], [0.06, 0.72, 0.5, 0.0]);
+      this.spawnParticles(tower.position, 28, 0x34d399, 5.2, 0.65);
+      this.pushFloatText(`+${bonus}G JACKPOT!`, tower.position, '#34d399');
+      this.showBanner(`ULTIMATE: Quantum Jackpot mencairkan +${bonus} Gold!`);
+    }
+
+    this.emitHudSnapshot();
+    return true;
+  }
+
+  // Graphics Lab Controls (CPMK-1 & CPMK-2)
   public setProjection(proj: 'perspective' | 'orthographic'): void {
     this.activeProjection = proj;
     this.handleResize();
@@ -929,108 +1212,116 @@ export class CyberDefenseEngine {
   public setCameraPreset(preset: CameraPreset): void {
     this.cameraPreset = preset;
     if (preset === 'tactical') {
-      this.camTargetGoal.set(0, 0.4, 0.2);
+      this.camTargetGoal.set(0, 0.4, 0.4);
       this.camYawGoal = 0;
-      this.camPitchGoal = 0.86;
-      this.camDistGoal = 27.5;
+      this.camPitchGoal = 0.88;
+      this.camDistGoal = 33.8;
     } else if (preset === 'action') {
-      this.camTargetGoal.set(-2.0, 0.6, 0.5);
-      this.camYawGoal = -0.32;
+      this.camTargetGoal.set(-2.5, 0.6, 0.5);
+      this.camYawGoal = -0.3;
       this.camPitchGoal = 0.52;
-      this.camDistGoal = 20.5;
+      this.camDistGoal = 24.0;
     } else if (preset === 'topdown') {
       this.camTargetGoal.set(0, 0, 0);
       this.camYawGoal = 0;
       this.camPitchGoal = 1.48;
-      this.camDistGoal = 30.0;
+      this.camDistGoal = 36.5;
     } else if (preset === 'core') {
-      this.camTargetGoal.set(11.5, 1.2, 0);
+      this.camTargetGoal.set(14.5, 1.2, 0);
       this.camYawGoal = -0.68;
       this.camPitchGoal = 0.54;
-      this.camDistGoal = 14.5;
+      this.camDistGoal = 16.5;
     }
     this.emitHudSnapshot();
   }
 
   // =========================================================================
-  // INTERNAL GAMEPLAY HELPERS
+  // INTERNAL HELPERS
   // =========================================================================
 
-  private handleSlotClick(slotId: number): void {
-    const existing = this.towers.find((t) => t.slotId === slotId);
-    if (existing) {
-      this.selectedSlotId = this.selectedSlotId === slotId ? null : slotId;
-      audioSynth.playUiClick();
-      this.refreshPreviewAndSlots();
-      this.emitHudSnapshot();
+  private syncMusicMood(): void {
+    if (this.phase !== 'playing') {
+      audioSynth.setMusicMood('idle');
       return;
     }
-
-    // Empty slot: immediately build the active selected tower type!
-    this.buildTowerOnSlot(slotId, this.activeBuildType);
+    if (!this.waveActive) {
+      audioSynth.setMusicMood('idle');
+      return;
+    }
+    const def = getWaveDefinition(this.wave);
+    const hasBoss = Boolean(def?.isBossWave) || this.enemies.some((e) => e.isBoss && e.alive);
+    audioSynth.setMusicMood(hasBoss ? 'boss' : 'combat');
   }
 
-  private rebuildPreviewRingGeometry(): void {
+  private rebuildPreviewRingGeometry(overclocked: boolean): void {
+    if (!this.activeBuildType) return;
     const preset = TOWER_PRESETS[this.activeBuildType];
-    const rangeM = getScaledRangeMeters(preset.baseRangeGdd, 1);
-    const affordable = this.gold >= preset.baseCost;
-    const rgb = affordable ? new THREE.Color(preset.accentColor) : new THREE.Color(0xff2a4a);
+    const rangeM = getScaledRangeMeters(preset.baseRangeGdd, 1, overclocked);
+    const ok = this.hoverValid || this.gold >= preset.baseCost;
+    const rgb = !ok
+      ? new THREE.Color(0xff2a4a)
+      : overclocked
+      ? new THREE.Color(0xfbbf24)
+      : new THREE.Color(preset.accentColor);
+
     this.previewRingMesh.geometry.dispose();
     this.previewRingMesh.geometry = buildRangeRingGeometry(
-      Math.max(0.65, rangeM - 0.35),
+      Math.max(0.6, rangeM - 0.35),
       rangeM,
       48,
-      [rgb.r, rgb.g, rgb.b, 0.12],
-      [rgb.r, rgb.g, rgb.b, 0.68]
+      [rgb.r, rgb.g, rgb.b, 0.14],
+      [rgb.r, rgb.g, rgb.b, 0.72]
     );
   }
 
   private refreshPreviewAndSlots(): void {
-    const occupiedSet = new Set(this.towers.map((t) => t.slotId));
+    const occupiedPads = new Set(
+      this.towers.map((t) => t.overclockPadId).filter((id): id is number => id !== null)
+    );
 
     for (const s of this.arena.slots) {
-      const occupied = occupiedSet.has(s.slotId);
-      const isSelected = this.selectedSlotId === s.slotId;
-      const isHovered = this.hoveredSlotId === s.slotId;
+      const occupied = occupiedPads.has(s.slotId);
+      const isHoveredPad = this.hoverOverclockPadId === s.slotId;
 
       if (occupied) {
-        s.plusMat.emissiveIntensity = 0.25;
-        s.frameMat.color.setHex(isSelected ? 0xfbbf24 : 0x1e3a5f);
-        s.frameMat.emissive.setHex(isSelected ? 0xfbbf24 : 0x0c2440);
-        s.frameMat.emissiveIntensity = isSelected ? 2.1 : 0.4;
+        s.plusMat.emissiveIntensity = 0.28;
+        s.frameMat.color.setHex(0xfbbf24);
+        s.frameMat.emissive.setHex(0xd97706);
+        s.frameMat.emissiveIntensity = 0.85;
       } else {
-        const canAfford = this.gold >= TOWER_PRESETS[this.activeBuildType].baseCost;
-        const hiColor = isHovered ? (canAfford ? 0x22d3ee : 0xff2a4a) : 0x00f0ff;
-        s.plusMat.color.setHex(hiColor);
-        s.plusMat.emissive.setHex(hiColor);
-        s.plusMat.emissiveIntensity = isHovered ? 3.2 : 1.7;
-        s.frameMat.color.setHex(isHovered ? hiColor : 0x38bdf8);
-        s.frameMat.emissive.setHex(isHovered ? hiColor : 0x0284c7);
-        s.frameMat.emissiveIntensity = isHovered ? 2.2 : 0.8;
+        s.plusMat.color.setHex(isHoveredPad ? 0xfef08a : 0xfbbf24);
+        s.plusMat.emissive.setHex(isHoveredPad ? 0xfacc15 : 0xf59e0b);
+        s.plusMat.emissiveIntensity = isHoveredPad ? 1.85 : 0.95;
+        s.frameMat.color.setHex(isHoveredPad ? 0xfbbf24 : 0x38bdf8);
+        s.frameMat.emissive.setHex(isHoveredPad ? 0xf59e0b : 0x0284c7);
+        s.frameMat.emissiveIntensity = isHoveredPad ? 1.45 : 0.72;
       }
     }
 
     for (const tower of this.towers) {
-      tower.rangeRingMesh.visible = this.showAllRangeRings || tower.slotId === this.selectedSlotId;
+      tower.rangeRingMesh.visible = this.showAllRangeRings || tower.id === this.selectedTowerId;
     }
 
-    if (
-      this.phase === 'playing' &&
-      this.hoveredSlotId !== null &&
-      !occupiedSet.has(this.hoveredSlotId)
-    ) {
-      const slot = NUR_TOWER_SLOTS[this.hoveredSlotId];
-      this.rebuildPreviewRingGeometry();
-      this.previewRingMesh.position.set(slot.position.x, 0.03, slot.position.z);
+    if (this.phase === 'playing' && this.activeBuildType && this.hoverWorldPos) {
+      const oc = this.hoverOverclockPadId !== null;
+      this.rebuildPreviewRingGeometry(oc);
+      this.previewRingMesh.position.set(this.hoverWorldPos.x, 0.035, this.hoverWorldPos.z);
       this.previewRingMesh.visible = true;
+
+      this.ghostFootprintMesh.position.set(this.hoverWorldPos.x, 0.14, this.hoverWorldPos.z);
+      this.ghostFootprintMat.color.setHex(
+        !this.hoverValid ? 0xff2a4a : oc ? 0xfbbf24 : TOWER_PRESETS[this.activeBuildType].accentColor
+      );
+      this.ghostFootprintMesh.visible = true;
     } else {
       this.previewRingMesh.visible = false;
+      this.ghostFootprintMesh.visible = false;
     }
   }
 
   private showBanner(msg: string): void {
     this.bannerMessage = msg;
-    this.bannerTimer = 3.2;
+    this.bannerTimer = 3.4;
   }
 
   private clearEntities(): void {
@@ -1058,11 +1349,11 @@ export class CyberDefenseEngine {
     }
     this.shockwaves = [];
 
-    for (const r of this.railTrails) {
+    for (const r of this.beamTrails) {
       this.entityRoot.remove(r.mesh);
       r.mesh.geometry.dispose();
     }
-    this.railTrails = [];
+    this.beamTrails = [];
 
     for (let i = 0; i < this.particles.length; i++) {
       this.particles[i].active = false;
@@ -1074,7 +1365,7 @@ export class CyberDefenseEngine {
 
   private spawnEnemy(type: EnemyType): void {
     const preset = ENEMY_PRESETS[type];
-    const maxHp = calculateEnemyWaveHp(preset.baseHp, this.wave);
+    const maxHp = calculateEnemyWaveHp(preset.baseHp, this.wave, preset.isBoss);
     const rig = buildEnemyRig(type, this.contactShadowTex);
     const startSample = NUR_BAKED_PATH.sampleAtDistance(0);
     rig.root.position.set(startSample.pos.x, 0.12, startSample.pos.z);
@@ -1094,18 +1385,20 @@ export class CyberDefenseEngine {
       rewardGold: preset.rewardGold,
       leakDamage: preset.leakDamage,
       isBoss: preset.isBoss,
+      isFinalBoss: preset.isFinalBoss,
       isFlying: preset.isFlying,
       distanceTraveled: 0,
       pathProgress: 0,
       slowTimer: 0,
       slowRatio: 0,
+      stunTimer: 0,
       hitFlashTimer: 0,
       position: rig.root.position.clone(),
       rig,
     };
 
     this.enemies.push(enemy);
-    this.spawnParticles(enemy.position, preset.isBoss ? 22 : 8, 0xff1e42, 3.0, 0.45);
+    this.spawnParticles(enemy.position, preset.isFinalBoss ? 32 : preset.isBoss ? 22 : 8, preset.accentColor, 3.2, 0.45);
   }
 
   private damageEnemy(
@@ -1132,10 +1425,10 @@ export class CyberDefenseEngine {
     if (enemy.currentHp <= 0) {
       enemy.alive = false;
       enemy.dying = true;
-      enemy.deathTimer = 0.34;
+      enemy.deathTimer = enemy.isFinalBoss ? 0.6 : 0.34;
       this.gold += enemy.rewardGold;
       this.enemiesDefeated += 1;
-      this.score += enemy.rewardGold * 10 + (enemy.isBoss ? 500 : 0);
+      this.score += enemy.rewardGold * 10 + (enemy.isFinalBoss ? 2500 : enemy.isBoss ? 600 : 0);
 
       const tower = this.towers.find((t) => t.id === sourceTowerId);
       if (tower) tower.kills += 1;
@@ -1143,29 +1436,61 @@ export class CyberDefenseEngine {
       audioSynth.playEnemyKill(enemy.isBoss);
       this.spawnParticles(
         enemy.position,
-        enemy.isBoss ? 32 : 14,
+        enemy.isFinalBoss ? 48 : enemy.isBoss ? 32 : 14,
         ENEMY_PRESETS[enemy.type].accentColor,
-        enemy.isBoss ? 5.8 : 3.6,
-        enemy.isBoss ? 0.75 : 0.48
+        enemy.isFinalBoss ? 7.5 : enemy.isBoss ? 5.6 : 3.6,
+        enemy.isFinalBoss ? 0.95 : enemy.isBoss ? 0.72 : 0.46
       );
       this.pushFloatText(`+${enemy.rewardGold}G`, enemy.position, '#4ade80');
 
-      if (enemy.isBoss) {
-        this.hitstopTimer = 0.065;
-        this.trauma = Math.min(1, this.trauma + 0.55);
+      if (enemy.isFinalBoss) {
+        this.hitstopTimer = 0.09;
+        this.trauma = Math.min(1, this.trauma + 0.75);
+        this.spawnShockwave(enemy.position, 6.5, [1.0, 0.25, 0.35, 0.95], [0.2, 0.85, 1.0, 0.0]);
+        this.showBanner('OMEGA-0 ROOTKIT HANCUR! Bersihkan sisa pasukan pengawal untuk menang!');
+      } else if (enemy.isBoss) {
+        this.hitstopTimer = 0.06;
+        this.trauma = Math.min(1, this.trauma + 0.48);
       }
+
       this.refreshPreviewAndSlots();
       this.emitHudSnapshot();
     }
   }
 
-  private spawnProjectile(tower: TowerEntity, target: EnemyEntity, damage: number): void {
+  private spawnBeamSegment(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    colorHex: number,
+    radius = 0.055,
+    duration = 0.22
+  ): void {
+    const dist = from.distanceTo(to);
+    if (dist < 0.05) return;
+    const geo = new THREE.CylinderGeometry(radius, radius, dist, 6);
+    geo.rotateZ(Math.PI / 2);
+    geo.translate(dist * 0.5, 0, 0);
+    const mat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(from);
+    const dir = this._v1.subVectors(to, from).normalize();
+    mesh.quaternion.setFromUnitVectors(this._xAxis, dir);
+    this.entityRoot.add(mesh);
+    this.beamTrails.push({ mesh, mat, age: 0, duration });
+  }
+
+  private fireTowerAttack(tower: TowerEntity, target: EnemyEntity, damage: number): void {
     const preset = TOWER_PRESETS[tower.type];
     const muzzleWorld = tower.rig.muzzleLocal.clone().applyMatrix4(tower.rig.turretHead.matrixWorld);
-    const targetWorld = target.position.clone().add(new THREE.Vector3(0, target.isFlying ? 0.95 : 0.55, 0));
+    const targetWorld = target.position.clone().add(new THREE.Vector3(0, target.isFlying ? 0.9 : 0.52, 0));
 
     if (tower.type === 'laser') {
-      // Instant scrolling UV Laser Beam + hit sparks
       this.damageEnemy(target, damage, false, tower.id);
       audioSynth.playLaser();
       this.spawnParticles(targetWorld, 5, preset.accentColor, 2.2, 0.25);
@@ -1173,50 +1498,74 @@ export class CyberDefenseEngine {
       if (tower.laserBeamMesh) {
         const dist = muzzleWorld.distanceTo(targetWorld);
         tower.laserBeamMesh.position.copy(muzzleWorld);
-        // Orient local +X axis from muzzle to target
         const dir = this._v1.subVectors(targetWorld, muzzleWorld).normalize();
-        const quat = this._quat.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
-        tower.laserBeamMesh.quaternion.copy(quat);
-        tower.laserBeamMesh.scale.set(dist, 1, 1);
+        tower.laserBeamMesh.quaternion.setFromUnitVectors(this._xAxis, dir);
+        tower.laserBeamMesh.scale.set(dist, tower.ultimateActiveTimer > 0 ? 1.8 : 1, 1);
         tower.laserBeamMesh.visible = true;
-        tower.laserActiveTimer = 0.22;
+        tower.laserActiveTimer = 0.2;
+      }
+
+      // Prism Overdrive Ultimate: hits a bonus nearby target with a secondary beam!
+      if (tower.ultimateActiveTimer > 0) {
+        const secondary = this.enemies.find(
+          (e) => e.alive && e.id !== target.id && distanceXZ(tower.position, e.position) <= 10.5
+        );
+        if (secondary) {
+          const secPos = secondary.position.clone().add(new THREE.Vector3(0, 0.55, 0));
+          this.spawnBeamSegment(muzzleWorld, secPos, 0x38bdf8, 0.07, 0.16);
+          this.damageEnemy(secondary, damage * 0.85, false, tower.id);
+        }
+      }
+      return;
+    }
+
+    if (tower.type === 'tesla') {
+      // Chain lightning jumping across 3..6 enemies!
+      const maxChains = getScaledChainCount(preset.chainCount, tower.level);
+      const hitIds = new Set<number>([target.id]);
+      let prevPos = muzzleWorld;
+      let curr: EnemyEntity | null = target;
+
+      audioSynth.playTesla();
+      for (let hop = 0; hop < maxChains && curr; hop++) {
+        const currPos = curr.position.clone().add(new THREE.Vector3(0, curr.isFlying ? 0.9 : 0.55, 0));
+        this.spawnBeamSegment(prevPos, currPos, hop === 0 ? 0xc084fc : 0x38bdf8, 0.065, 0.22);
+        this.spawnParticles(currPos, 6, 0xc084fc, 2.8, 0.28);
+        this.damageEnemy(curr, damage * Math.pow(0.88, hop), false, tower.id);
+        prevPos = currPos;
+
+        // Find nearest unhit enemy within 5.2m jump radius
+        let nextTarget: EnemyEntity | null = null;
+        let minD = 5.2;
+        for (const cand of this.enemies) {
+          if (!cand.alive || hitIds.has(cand.id)) continue;
+          const d = distanceXZ(curr.position, cand.position);
+          if (d < minD) {
+            minD = d;
+            nextTarget = cand;
+          }
+        }
+        if (nextTarget) hitIds.add(nextTarget.id);
+        curr = nextTarget;
       }
       return;
     }
 
     if (tower.type === 'armor_pen') {
-      // Instant high-velocity electromagnetic railgun beam + slug flash
       this.damageEnemy(target, damage, true, tower.id);
       audioSynth.playArmorPen();
       this.spawnParticles(targetWorld, 12, preset.accentColor, 4.4, 0.35);
-
-      const dist = muzzleWorld.distanceTo(targetWorld);
-      const geo = new THREE.CylinderGeometry(0.055, 0.055, dist, 6);
-      geo.rotateZ(Math.PI / 2);
-      geo.translate(dist * 0.5, 0, 0);
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0xff3b5c,
-        transparent: true,
-        opacity: 0.92,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.copy(muzzleWorld);
-      const dir = this._v1.subVectors(targetWorld, muzzleWorld).normalize();
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
-      this.entityRoot.add(mesh);
-      this.railTrails.push({ mesh, mat, age: 0, duration: 0.22 });
+      this.spawnBeamSegment(muzzleWorld, targetWorld, 0xff3b5c, 0.06, 0.22);
       return;
     }
 
-    // Physical projectile for Cannon (arcing shell) & Freeze (frost shard)
+    // Physical projectile for Plasma Cannon (arcing AoE shell) & Cryo Emitter (frost shard)
     const isCannon = tower.type === 'cannon';
-    const geo = isCannon ? new THREE.SphereGeometry(0.18, 10, 10) : new THREE.OctahedronGeometry(0.18, 0);
+    const geo = isCannon ? new THREE.SphereGeometry(0.19, 10, 10) : new THREE.OctahedronGeometry(0.18, 0);
     const mat = new THREE.MeshStandardMaterial({
       color: preset.accentColor,
       emissive: preset.accentColor,
-      emissiveIntensity: 2.0,
+      emissiveIntensity: 1.5,
       roughness: 0.2,
     });
     const mesh = new THREE.Mesh(geo, mat);
@@ -1224,11 +1573,15 @@ export class CyberDefenseEngine {
     this.entityRoot.add(mesh);
 
     const dist = muzzleWorld.distanceTo(targetWorld);
-    const speed = isCannon ? 15.5 : 19.0;
-    const duration = Math.max(0.12, dist / speed);
+    const speed = isCannon ? 17.5 : 21.0;
+    const duration = Math.max(0.11, dist / speed);
 
     if (isCannon) audioSynth.playCannon();
     else audioSynth.playFreeze();
+
+    // Cryo Emitter gains AoE frost pulse at Lv.3+
+    const cryoAoe = !isCannon && tower.level >= 3 ? preset.aoeRadiusGdd * AOE_GDD_TO_METERS : 0;
+    const slowBoost = !isCannon ? Math.min(0.62, preset.slowRatio + (tower.level - 1) * 0.05) : 0;
 
     this.projectiles.push({
       mesh,
@@ -1239,24 +1592,29 @@ export class CyberDefenseEngine {
       targetEnemyId: target.id,
       progress: 0,
       duration,
-      arcHeight: isCannon ? Math.min(2.6, 0.9 + dist * 0.16) : 0.35,
+      arcHeight: isCannon ? Math.min(2.6, 0.9 + dist * 0.14) : 0.35,
       damage,
-      aoeRadiusMeters: preset.aoeRadiusGdd * AOE_GDD_TO_METERS,
-      slowRatio: preset.slowRatio,
+      aoeRadiusMeters: isCannon ? preset.aoeRadiusGdd * AOE_GDD_TO_METERS : cryoAoe,
+      slowRatio: slowBoost,
       slowDuration: preset.slowDurationSec,
       ignoresArmor: preset.ignoresArmor,
       sourceTowerId: tower.id,
     });
   }
 
-  private spawnShockwave(pos: THREE.Vector3, radius: number): void {
-    const geo = buildAoeShockwaveGeometry(radius, 36);
+  private spawnShockwave(
+    pos: THREE.Vector3,
+    radius: number,
+    centerCol: [number, number, number, number] = [1.0, 0.72, 0.25, 0.85],
+    edgeCol: [number, number, number, number] = [1.0, 0.25, 0.05, 0.0]
+  ): void {
+    const geo = buildAoeShockwaveGeometry(radius, 36, centerCol, edgeCol);
     const mat = createRangeRingMaterial({ pulseSpeed: 0, pulseStrength: 0, fade: 0.95 });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(pos.x, 0.04, pos.z);
+    mesh.position.set(pos.x, 0.05, pos.z);
     mesh.scale.setScalar(0.12);
     this.entityRoot.add(mesh);
-    this.shockwaves.push({ mesh, mat, age: 0, duration: 0.38, maxScale: 1.0 });
+    this.shockwaves.push({ mesh, mat, age: 0, duration: 0.42, maxScale: 1.0 });
   }
 
   private spawnParticles(
@@ -1267,7 +1625,8 @@ export class CyberDefenseEngine {
     life: number
   ): void {
     for (let i = 0; i < count; i++) {
-      const p = this.particles[this.particleCursor];
+      const idx = this.particleCursor;
+      const p = this.particles[idx];
       this.particleCursor = (this.particleCursor + 1) % PARTICLE_POOL_SIZE;
       p.active = true;
       p.pos.set(origin.x, origin.y + 0.45, origin.z);
@@ -1279,7 +1638,7 @@ export class CyberDefenseEngine {
       p.life = life * (0.75 + Math.random() * 0.5);
       p.scale = 0.7 + Math.random() * 0.75;
       p.color.setHex(colorHex);
-      this.particleMesh.setColorAt(this.particleCursor === 0 ? PARTICLE_POOL_SIZE - 1 : this.particleCursor - 1, p.color);
+      this.particleMesh.setColorAt(idx, p.color);
     }
     if (this.particleMesh.instanceColor) {
       this.particleMesh.instanceColor.needsUpdate = true;
@@ -1287,9 +1646,8 @@ export class CyberDefenseEngine {
   }
 
   private pushFloatText(text: string, worldPos: THREE.Vector3, color: string): void {
-    this._v3.set(worldPos.x, worldPos.y + 1.25, worldPos.z);
+    this._v3.set(worldPos.x, worldPos.y + 1.35, worldPos.z);
     this._v3.project(this.activeCamera);
-    // Guard world-to-screen projections per game_title_and_hud.md
     if (this._v3.z < -1 || this._v3.z > 1) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const x = (this._v3.x * 0.5 + 0.5) * rect.width;
@@ -1349,7 +1707,6 @@ export class CyberDefenseEngine {
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
     this.elapsed += dt;
 
-    // Real-time visual effects (trauma decay, banner timer, arena animations)
     this.trauma = Math.max(0, this.trauma - dt * 1.45);
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
@@ -1360,7 +1717,6 @@ export class CyberDefenseEngine {
     }
 
     if (this.phase === 'title') {
-      // Live World Camera Flyover over Nur's 3D Arena
       this.arena.update(dt, this.elapsed, 1.0);
       this.updateTitleCamera(dt);
     } else if (this.phase === 'playing') {
@@ -1375,6 +1731,7 @@ export class CyberDefenseEngine {
           const won = this.pendingOutcome === 'victory';
           this.phase = won ? 'victory' : 'gameover';
           this.pendingOutcome = null;
+          audioSynth.setMusicMood('idle');
           if (won) audioSynth.playVictory();
           else audioSynth.playGameOver();
           this.onMatchEnd({
@@ -1393,11 +1750,9 @@ export class CyberDefenseEngine {
         this.stepSimulation(simDt, dt);
       }
     } else {
-      // Paused / Victory / Game Over: keep smooth camera settle, freeze combat
       this.updateCameraTransform(dt);
     }
 
-    // Update shader uniforms
     this.previewRingMat.uniforms.uTime.value = this.elapsed;
     for (const t of this.towers) {
       t.rangeRingMat.uniforms.uTime.value = this.elapsed;
@@ -1407,7 +1762,6 @@ export class CyberDefenseEngine {
 
     this.renderer.render(this.scene, this.activeCamera);
 
-    // Throttled HUD sync (<= 8Hz during active wave for live counters & Boss HP)
     this.hudSyncAccum += dt;
     if (this.hudSyncAccum >= 0.14 && this.phase === 'playing') {
       this.hudSyncAccum = 0;
@@ -1418,37 +1772,34 @@ export class CyberDefenseEngine {
   }
 
   private updateTitleCamera(dt: number): void {
-    const angle = this.elapsed * 0.16;
-    const radius = 26.5;
+    const angle = this.elapsed * 0.15;
+    const radius = 32.0;
     const camX = Math.sin(angle) * radius * 0.88;
-    const camZ = Math.cos(angle) * radius * 0.72 + 4.5;
-    const camY = 12.8 + Math.sin(this.elapsed * 0.35) * 1.4;
+    const camZ = Math.cos(angle) * radius * 0.72 + 5.0;
+    const camY = 15.2 + Math.sin(this.elapsed * 0.35) * 1.4;
     this.perspCamera.position.set(camX, camY, camZ);
     this.perspCamera.lookAt(0, 0.6, 0);
-    // Keep ortho synced
     this.orthoCamera.position.copy(this.perspCamera.position);
     this.orthoCamera.lookAt(0, 0.6, 0);
     void dt;
   }
 
   private updatePlayerCameraControls(dt: number): void {
-    const panSpeed = 14.0 * dt;
+    const panSpeed = 16.0 * dt;
     let panX = 0;
     let panZ = 0;
-    if (this.keysPressed.has('w') || this.keysPressed.has('arrowup')) panZ -= 1;
-    if (this.keysPressed.has('s') || this.keysPressed.has('arrowdown')) panZ += 1;
-    if (this.keysPressed.has('a') || this.keysPressed.has('arrowleft')) panX -= 1;
-    if (this.keysPressed.has('d') || this.keysPressed.has('arrowright')) panX += 1;
-    if (this.keysPressed.has('q')) this.camYawGoal -= 1.3 * dt;
-    if (this.keysPressed.has('e')) this.camYawGoal += 1.3 * dt;
+    if (this.keysPressed.has('arrowup')) panZ -= 1;
+    if (this.keysPressed.has('arrowdown')) panZ += 1;
+    if (this.keysPressed.has('arrowleft')) panX -= 1;
+    if (this.keysPressed.has('arrowright')) panX += 1;
 
     if (panX !== 0 || panZ !== 0) {
       const cosY = Math.cos(this.camYaw);
       const sinY = Math.sin(this.camYaw);
       const worldDx = panX * cosY + panZ * sinY;
       const worldDz = -panX * sinY + panZ * cosY;
-      this.camTargetGoal.x = THREE.MathUtils.clamp(this.camTargetGoal.x + worldDx * panSpeed, -14, 14);
-      this.camTargetGoal.z = THREE.MathUtils.clamp(this.camTargetGoal.z + worldDz * panSpeed, -8.5, 8.5);
+      this.camTargetGoal.x = THREE.MathUtils.clamp(this.camTargetGoal.x + worldDx * panSpeed, -17, 17);
+      this.camTargetGoal.z = THREE.MathUtils.clamp(this.camTargetGoal.z + worldDz * panSpeed, -11, 11);
     }
   }
 
@@ -1462,7 +1813,6 @@ export class CyberDefenseEngine {
     const horiz = Math.cos(this.camPitch) * this.camDist;
     const vert = Math.sin(this.camPitch) * this.camDist;
 
-    // Decaying trauma^2 camera shake
     const shake = this.trauma * this.trauma * 0.55;
     const sx = shake > 0.001 ? Math.sin(this.elapsed * 47.0) * shake : 0;
     const sy = shake > 0.001 ? Math.cos(this.elapsed * 53.0) * shake : 0;
@@ -1488,6 +1838,14 @@ export class CyberDefenseEngine {
   }
 
   private stepSimulation(simDt: number, realDt: number): void {
+    // 0. Auto-Start Next Wave countdown
+    if (this.autoStartWave && !this.waveActive && this.wave > 0 && this.wave < TOTAL_WAVES) {
+      this.autoStartTimer -= realDt;
+      if (this.autoStartTimer <= 0) {
+        this.startNextWave();
+      }
+    }
+
     // 1. Wave Spawner
     if (this.waveActive && this.spawnQueue.length > 0) {
       this.spawnTimer -= simDt;
@@ -1498,15 +1856,15 @@ export class CyberDefenseEngine {
       }
     }
 
-    // 2. Update Enemies along Nur's Cubic Bezier Path
+    // 2. Update Enemies along Nur's Extended Multi-Switchback Path
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
 
       if (e.dying) {
         e.deathTimer -= realDt;
-        const frac = Math.max(0, e.deathTimer / 0.34);
-        e.rig.bodyGroup.scale.set(1 + (1 - frac) * 0.35, frac, 1 + (1 - frac) * 0.35);
-        e.rig.bodyGroup.rotation.z = (1 - frac) * 0.6;
+        const frac = Math.max(0, e.deathTimer / (e.isFinalBoss ? 0.6 : 0.34));
+        e.rig.bodyGroup.scale.set(1 + (1 - frac) * 0.4, frac, 1 + (1 - frac) * 0.4);
+        e.rig.bodyGroup.rotation.z = (1 - frac) * 0.65;
         e.rig.hpBarBg.visible = false;
         e.rig.frozenOverlay.visible = false;
         if (e.deathTimer <= 0) {
@@ -1516,7 +1874,10 @@ export class CyberDefenseEngine {
         continue;
       }
 
-      // Slow timer
+      if (e.stunTimer > 0) {
+        e.stunTimer = Math.max(0, e.stunTimer - simDt);
+      }
+
       if (e.slowTimer > 0) {
         e.slowTimer -= simDt;
         e.rig.frozenOverlay.visible = true;
@@ -1527,27 +1888,25 @@ export class CyberDefenseEngine {
         }
       }
 
-      // Hit flash feedback
       if (e.hitFlashTimer > 0) {
         e.hitFlashTimer -= realDt;
-        const flashIntensity = e.hitFlashTimer > 0 ? 1.5 : 0;
+        const flashIntensity = e.hitFlashTimer > 0 ? 1.45 : 0;
         for (const mat of e.rig.flashMaterials) {
           mat.emissive.setHex(flashIntensity > 0 ? 0xffffff : 0x000000);
           mat.emissiveIntensity = flashIntensity;
         }
       }
 
-      const effSpeed = e.baseSpeed * (1 - e.slowRatio);
+      const effSpeed = e.stunTimer > 0 ? 0 : e.baseSpeed * (1 - e.slowRatio);
       e.distanceTraveled += effSpeed * simDt;
 
       if (e.distanceTraveled >= NUR_BAKED_PATH.totalLength) {
-        // Reached Energy Core!
         e.alive = false;
         this.coreHp = Math.max(0, this.coreHp - e.leakDamage);
-        this.trauma = Math.min(1, this.trauma + (e.isBoss ? 0.85 : 0.42));
+        this.trauma = Math.min(1, this.trauma + (e.isBoss ? 0.85 : 0.38));
         audioSynth.playCoreHit();
-        this.spawnParticles(e.position, 20, 0xff1e42, 4.5, 0.55);
-        this.pushFloatText(`-${e.leakDamage} CORE HP`, e.position, '#ff1e42');
+        this.spawnParticles(e.position, 22, 0xff1744, 4.6, 0.55);
+        this.pushFloatText(`-${e.leakDamage} CORE HP`, e.position, '#ff1744');
 
         this.entityRoot.remove(e.rig.root);
         this.enemies.splice(i, 1);
@@ -1564,27 +1923,26 @@ export class CyberDefenseEngine {
       e.pathProgress = sample.progress;
       e.position.set(sample.pos.x, 0.12, sample.pos.z);
       e.rig.root.position.copy(e.position);
+      e.rig.root.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
 
-      // Smoothly face path tangent
-      const targetYaw = Math.atan2(sample.tangent.x, sample.tangent.z);
-      e.rig.root.rotation.y = targetYaw;
-
-      // Distance-synced gait bob or hover motion
       if (e.isFlying) {
-        e.rig.bodyGroup.position.y = 0.88 + Math.sin(this.elapsed * 5.2 + e.id) * 0.14;
+        e.rig.bodyGroup.position.y = 0.85 + Math.sin(this.elapsed * 5.2 + e.id) * 0.14;
         if (e.rig.crownOrWings) {
           e.rig.crownOrWings.rotation.z = Math.sin(this.elapsed * 9.0 + e.id) * 0.12;
         }
       } else {
-        const stride = e.distanceTraveled * (e.isBoss ? 2.4 : 4.6);
-        e.rig.bodyGroup.position.y = Math.abs(Math.sin(stride)) * (e.isBoss ? 0.1 : 0.08);
-        e.rig.bodyGroup.rotation.z = Math.sin(stride) * 0.06;
+        const stride = e.distanceTraveled * (e.isBoss ? 2.2 : 4.4);
+        e.rig.bodyGroup.position.y = Math.abs(Math.sin(stride)) * (e.isBoss ? 0.12 : 0.08);
+        e.rig.bodyGroup.rotation.z = Math.sin(stride) * 0.05;
         if (e.rig.crownOrWings) {
-          e.rig.crownOrWings.rotation.z += realDt * 1.6;
+          e.rig.crownOrWings.rotation.z += realDt * (e.isFinalBoss ? 1.8 : 1.3);
+          e.rig.crownOrWings.rotation.y += realDt * 0.8;
+        }
+        if (e.rig.secondaryRing) {
+          e.rig.secondaryRing.rotation.z -= realDt * 2.2;
         }
       }
 
-      // Billboard overhead HP bar toward active camera
       e.rig.hpBarBg.quaternion.copy(this.activeCamera.quaternion);
       const hpRatio = Math.max(0.001, e.currentHp / e.maxHp);
       e.rig.hpBarFill.scale.x = hpRatio;
@@ -1594,27 +1952,56 @@ export class CyberDefenseEngine {
       }
     }
 
-    // 3. Update Towers (Target Selection + Orthonormal Turret Aim + Attack)
+    // 3. Update Towers (Farming Economy + Ultimate Cooldowns + Target Selection + Combat)
     for (const tower of this.towers) {
       const preset = TOWER_PRESETS[tower.type];
-      const rangeMeters = getScaledRangeMeters(preset.baseRangeGdd, tower.level);
-      const dmg = getScaledDamage(preset.baseDamage, tower.level);
+      const overclocked = tower.overclockPadId !== null;
 
-      // Spin idle elements (Freeze crystal / Laser prism)
+      // Spin idle & Apex rings
       if (tower.rig.spinNode) {
-        tower.rig.spinNode.rotation.y += realDt * (tower.type === 'freeze' ? 1.8 : 2.5);
-        if (tower.type === 'freeze') {
-          tower.rig.spinNode.position.y = 0.68 + Math.sin(this.elapsed * 3.0 + tower.id) * 0.06;
+        const spinSpeed = tower.ultimateActiveTimer > 0 ? 5.5 : tower.type === 'farm' ? 1.6 : 2.2;
+        tower.rig.spinNode.rotation.y += realDt * spinSpeed;
+        if (tower.type === 'freeze' || tower.type === 'farm') {
+          const baseY = tower.type === 'farm' ? 0.86 : 0.68;
+          tower.rig.spinNode.position.y = baseY + Math.sin(this.elapsed * 3.0 + tower.id) * 0.06;
         }
       }
+      if (tower.level >= MAX_TOWER_LEVEL) {
+        tower.rig.apexRing.rotation.z += realDt * 1.4;
+        tower.rig.apexRing.position.y = 1.48 + Math.sin(this.elapsed * 3.2 + tower.id) * 0.05;
+      }
 
-      // Recover recoil
+      // Tick Ultimate cooldown & active duration
+      if (tower.ultimateCooldown > 0) {
+        tower.ultimateCooldown = Math.max(0, tower.ultimateCooldown - simDt);
+      }
+      if (tower.ultimateActiveTimer > 0) {
+        tower.ultimateActiveTimer = Math.max(0, tower.ultimateActiveTimer - simDt);
+      }
+
+      // QUANTUM DATA FARM: Passive Gold mining packets during active wave!
+      if (tower.type === 'farm') {
+        if (this.waveActive) {
+          tower.farmTimer -= simDt * (overclocked ? 1.15 : 1.0);
+          if (tower.farmTimer <= 0) {
+            const packet = getScaledFarmPacket(preset.incomePerCycle, tower.level, overclocked);
+            this.gold += packet;
+            tower.goldEarned += packet;
+            tower.farmTimer = preset.incomeCycleSec;
+            audioSynth.playFarmIncome();
+            this.spawnParticles(tower.position, 10, 0x34d399, 2.8, 0.42);
+            this.pushFloatText(`+${packet}G`, tower.position, '#34d399');
+            this.emitHudSnapshot();
+          }
+        }
+        continue;
+      }
+
       if (tower.recoil > 0) {
         tower.recoil = Math.max(0, tower.recoil - realDt * 4.5);
         tower.rig.recoilGroup.position.z = -tower.recoil * 0.22;
       }
 
-      // Laser beam visibility timer
       if (tower.laserActiveTimer > 0) {
         tower.laserActiveTimer -= realDt;
         if (tower.laserActiveTimer <= 0 && tower.laserBeamMesh) {
@@ -1622,27 +2009,34 @@ export class CyberDefenseEngine {
         }
       }
 
+      const rangeMeters = getScaledRangeMeters(preset.baseRangeGdd, tower.level, overclocked);
+      const dmg = getScaledDamage(preset.baseDamage, tower.level);
+      const fireRate =
+        getScaledFireRate(preset.fireRateSec, tower.level, overclocked) /
+        (tower.type === 'laser' && tower.ultimateActiveTimer > 0 ? 2.6 : 1.0);
+
       tower.cooldown = Math.max(0, tower.cooldown - simDt);
 
       const target = selectTarget(tower.position, rangeMeters, this.enemies, tower.targetingMode);
       if (target) {
-        const desiredYaw = computeTurretYaw(tower.position, target.position);
-        // Shortest-angle yaw damping
-        let diff = desiredYaw - tower.rig.turretHead.rotation.y;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        tower.rig.turretHead.rotation.y += diff * (1 - Math.exp(-14 * simDt));
+        if (tower.type !== 'tesla' && tower.type !== 'freeze') {
+          const desiredYaw = computeTurretYaw(tower.position, target.position);
+          let diff = desiredYaw - tower.rig.turretHead.rotation.y;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          tower.rig.turretHead.rotation.y += diff * (1 - Math.exp(-15 * simDt));
+        }
 
         if (tower.cooldown <= 0) {
           tower.rig.turretHead.updateMatrixWorld(true);
-          this.spawnProjectile(tower, target, dmg);
-          tower.cooldown = preset.fireRateSec;
+          this.fireTowerAttack(tower, target, dmg);
+          tower.cooldown = fireRate;
           tower.recoil = 1.0;
         }
       }
     }
 
-    // 4. Update Physical Projectiles (Cannon & Freeze)
+    // 4. Update Physical Projectiles (Plasma Cannon & Cryo Emitter)
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.progress += simDt / p.duration;
@@ -1664,20 +2058,30 @@ export class CyberDefenseEngine {
       p.mesh.rotation.y += realDt * 6;
 
       if (p.progress >= 1) {
-        // Impact!
         if (p.aoeRadiusMeters > 0) {
-          // Cannon AoE Splash + Triangulated Shockwave Disc
-          this.spawnShockwave(p.targetPos, p.aoeRadiusMeters);
-          this.spawnParticles(p.targetPos, 20, 0xfb923c, 5.0, 0.55);
-          this.trauma = Math.min(1, this.trauma + 0.18);
+          const isCryo = p.type === 'freeze';
+          this.spawnShockwave(
+            p.targetPos,
+            p.aoeRadiusMeters,
+            isCryo ? [0.49, 0.83, 0.99, 0.8] : [1.0, 0.72, 0.25, 0.85],
+            isCryo ? [0.22, 0.74, 0.97, 0.0] : [1.0, 0.25, 0.05, 0.0]
+          );
+          this.spawnParticles(p.targetPos, isCryo ? 14 : 20, isCryo ? 0x7dd3fc : 0xfb923c, 4.8, 0.52);
+          if (!isCryo) this.trauma = Math.min(1, this.trauma + 0.14);
           for (const e of this.enemies) {
             if (!e.alive) continue;
             if (distanceXZ(p.targetPos, e.position) <= p.aoeRadiusMeters) {
-              this.damageEnemy(e, p.damage, p.ignoresArmor, p.sourceTowerId);
+              this.damageEnemy(
+                e,
+                p.damage,
+                p.ignoresArmor,
+                p.sourceTowerId,
+                p.slowRatio,
+                p.slowDuration
+              );
             }
           }
         } else {
-          // Single-target impact (Freeze bolt)
           if (liveTarget) {
             this.damageEnemy(
               liveTarget,
@@ -1697,7 +2101,7 @@ export class CyberDefenseEngine {
       }
     }
 
-    // 5. Update Shockwave Discs & Railgun Trails
+    // 5. Update Shockwave Discs & Beam Trails
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
       const s = this.shockwaves[i];
       s.age += realDt;
@@ -1712,36 +2116,63 @@ export class CyberDefenseEngine {
       }
     }
 
-    for (let i = this.railTrails.length - 1; i >= 0; i--) {
-      const r = this.railTrails[i];
+    for (let i = this.beamTrails.length - 1; i >= 0; i--) {
+      const r = this.beamTrails[i];
       r.age += realDt;
       const frac = Math.min(1, r.age / r.duration);
-      r.mat.opacity = (1 - frac) * 0.9;
+      r.mat.opacity = (1 - frac) * 0.92;
       if (r.age >= r.duration) {
         this.entityRoot.remove(r.mesh);
         r.mesh.geometry.dispose();
-        this.railTrails.splice(i, 1);
+        this.beamTrails.splice(i, 1);
       }
     }
 
-    // 6. Update Pooled 3D Particles
+    // 6. Update Pooled Particles
     this.updateParticles(realDt);
 
-    // 7. Check Wave Clear / Victory Condition
+    // 7. Wave Clear + Data Farm Dividends + Final Stage Victory Check!
     const aliveCount = this.enemies.filter((e) => e.alive).length;
     if (this.waveActive && this.spawnQueue.length === 0 && aliveCount === 0 && !this.pendingOutcome) {
       this.waveActive = false;
       const bonus = getWaveClearBonus(this.wave);
-      this.gold += bonus;
-      this.score += bonus * 5 + this.wave * 150;
-      this.showBanner(`Wave ${this.wave} selesai! Bonus +${bonus} Gold`);
+
+      // Collect Data Farm end-of-wave dividends!
+      let farmDividendTotal = 0;
+      for (const t of this.towers) {
+        if (t.type === 'farm') {
+          const div = getScaledFarmDividend(
+            TOWER_PRESETS.farm.waveDividend,
+            t.level,
+            t.overclockPadId !== null
+          );
+          farmDividendTotal += div;
+          t.goldEarned += div;
+          this.pushFloatText(`+${div}G DIVIDEN`, t.position, '#34d399');
+        }
+      }
+
+      const totalEarned = bonus + farmDividendTotal;
+      this.gold += totalEarned;
+      this.score += totalEarned * 5 + this.wave * 180;
+      this.syncMusicMood();
 
       if (this.wave >= TOTAL_WAVES) {
+        this.showBanner('FINAL STAGE SELESAI! OMEGA-0 Rootkit & pasukannya berhasil dimusnahkan!');
         this.pendingOutcome = 'victory';
-        this.defeatDelayTimer = 0.65;
+        this.defeatDelayTimer = 0.75;
       } else {
-        audioSynth.playUpgrade();
+        audioSynth.playUpgrade(false);
+        this.showBanner(
+          farmDividendTotal > 0
+            ? `Wave ${this.wave} selesai! Bonus +${bonus}G + Dividen Farm +${farmDividendTotal}G`
+            : `Wave ${this.wave} selesai! Bonus +${bonus}G`
+        );
+        if (this.autoStartWave) {
+          this.autoStartTimer = 1.8;
+        }
       }
+
       this.refreshPreviewAndSlots();
       this.emitHudSnapshot();
     }
@@ -1777,44 +2208,87 @@ export class CyberDefenseEngine {
     }
   }
 
+  private buildAbilitySnapshot(t: TowerEntity): ActiveAbilitySnapshot | null {
+    if (t.level < MAX_TOWER_LEVEL) return null;
+    const preset = TOWER_PRESETS[t.type];
+    return {
+      towerId: t.id,
+      towerType: t.type,
+      abilityName: preset.ultimate.name,
+      hotkey: preset.ultimate.hotkey,
+      description: preset.ultimate.description,
+      cooldownRemaining: Number(t.ultimateCooldown.toFixed(1)),
+      cooldownTotal: preset.ultimate.cooldownSec,
+      activeRemaining: Number(t.ultimateActiveTimer.toFixed(1)),
+      ready: t.ultimateCooldown <= 0,
+      accentHex: preset.accentHex,
+    };
+  }
+
   private emitHudSnapshot(): void {
     const selectedTowerEntity =
-      this.selectedSlotId !== null
-        ? this.towers.find((t) => t.slotId === this.selectedSlotId) ?? null
+      this.selectedTowerId !== null
+        ? this.towers.find((t) => t.id === this.selectedTowerId) ?? null
         : null;
 
     let selectedTower: SelectedTowerSnapshot | null = null;
     if (selectedTowerEntity) {
       const preset = TOWER_PRESETS[selectedTowerEntity.type];
+      const oc = selectedTowerEntity.overclockPadId !== null;
       selectedTower = {
         id: selectedTowerEntity.id,
-        slotId: selectedTowerEntity.slotId,
-        slotName: `Slot ${selectedTowerEntity.slotId + 1}`,
+        overclocked: oc,
+        locationLabel:
+          selectedTowerEntity.overclockPadId !== null
+            ? `Overclock Node ${selectedTowerEntity.overclockPadId + 1}`
+            : 'Penempatan Bebas',
         type: selectedTowerEntity.type,
         displayName: preset.displayName,
+        tierName: preset.tierNames[selectedTowerEntity.level - 1],
         level: selectedTowerEntity.level,
         damage: getScaledDamage(preset.baseDamage, selectedTowerEntity.level),
-        rangeGdd: Math.round(getScaledRangeGdd(preset.baseRangeGdd, selectedTowerEntity.level)),
-        rangeMeters: Number(getScaledRangeMeters(preset.baseRangeGdd, selectedTowerEntity.level).toFixed(1)),
-        fireRateSec: preset.fireRateSec,
+        rangeGdd: Math.round(getScaledRangeGdd(preset.baseRangeGdd, selectedTowerEntity.level, oc)),
+        rangeMeters: Number(getScaledRangeMeters(preset.baseRangeGdd, selectedTowerEntity.level, oc).toFixed(1)),
+        fireRateSec: getScaledFireRate(preset.fireRateSec, selectedTowerEntity.level, oc),
+        farmPacketGold:
+          selectedTowerEntity.type === 'farm'
+            ? getScaledFarmPacket(preset.incomePerCycle, selectedTowerEntity.level, oc)
+            : 0,
+        farmWaveDividend:
+          selectedTowerEntity.type === 'farm'
+            ? getScaledFarmDividend(preset.waveDividend, selectedTowerEntity.level, oc)
+            : 0,
+        chainCount: getScaledChainCount(preset.chainCount, selectedTowerEntity.level),
         targetingMode: selectedTowerEntity.targetingMode,
         totalInvested: selectedTowerEntity.totalInvested,
         upgradeCost: calculateUpgradeCost(preset.baseCost, selectedTowerEntity.level),
         sellRefund: calculateSellRefund(selectedTowerEntity.totalInvested),
         kills: selectedTowerEntity.kills,
+        goldEarned: selectedTowerEntity.goldEarned,
         accentHex: preset.accentHex,
+        ultimate: this.buildAbilitySnapshot(selectedTowerEntity),
       };
     }
 
-    const activeBoss = this.enemies.find((e) => e.isBoss && e.alive);
+    const abilities = this.towers
+      .map((t) => this.buildAbilitySnapshot(t))
+      .filter((a): a is ActiveAbilitySnapshot => a !== null);
+
+    // Prioritize Final Boss in Boss Bar if both Mid-Boss and Final Boss exist on Wave 15!
+    const activeBoss =
+      this.enemies.find((e) => e.isFinalBoss && e.alive) ??
+      this.enemies.find((e) => e.isBoss && e.alive);
     const bossStatus = activeBoss
       ? {
-          name: ENEMY_PRESETS.demon_king.displayName,
+          name: ENEMY_PRESETS[activeBoss.type].displayName,
+          role: ENEMY_PRESETS[activeBoss.type].role,
           hp: Math.ceil(activeBoss.currentHp),
           maxHp: activeBoss.maxHp,
+          isFinalBoss: activeBoss.isFinalBoss,
         }
       : null;
 
+    const currentDef = getWaveDefinition(Math.max(1, this.wave));
     const aliveEnemies = this.enemies.filter((e) => e.alive).length + this.spawnQueue.length;
 
     this.onHudUpdate({
@@ -1824,14 +2298,17 @@ export class CyberDefenseEngine {
       maxCoreHp: STARTING_CORE_HP,
       wave: this.wave,
       totalWaves: TOTAL_WAVES,
+      stageLabel: currentDef?.stageLabel ?? 'Stage 1 · Perimeter Scan',
       waveActive: this.waveActive,
+      autoStartWave: this.autoStartWave,
       enemiesRemaining: aliveEnemies,
       enemiesDefeated: this.enemiesDefeated,
       score: this.score,
       timeScale: this.timeScale,
       activeBuildType: this.activeBuildType,
-      selectedSlotId: this.selectedSlotId,
+      selectedTowerId: this.selectedTowerId,
       selectedTower,
+      abilities,
       bossStatus,
       bannerMessage: this.bannerMessage,
       graphics: {

@@ -1,15 +1,15 @@
-// Title Screen Stage Overlay — sits over calm negative space while Nur's 3D Arena orbits live behind it.
+// Title Screen Stage Overlay — sits over calm negative space while the 3D Arena orbits live behind it.
 
 import React, { useState } from 'react';
-import { BookOpen, Play, Settings, Volume2, VolumeX, X } from 'lucide-react';
-import { ENEMY_PRESETS, TOWER_ORDER, TOWER_PRESETS } from '../game/constants';
+import { BookOpen, Music, Play, Settings, Volume2, VolumeX, X } from 'lucide-react';
+import { ENEMY_PRESETS, TOTAL_WAVES, TOWER_ORDER, TOWER_PRESETS } from '../game/constants';
 import { SaveData } from '../game/saveManager';
 import { CyberDefenseEmblem, TowerSilhouetteIcon } from './GameIcons';
 
 interface TitleScreenProps {
   saveData: SaveData;
   onStart: () => void;
-  onUpdateAudio: (volume: number, muted: boolean) => void;
+  onUpdateAudio: (volume: number, muted: boolean, musicMuted: boolean) => void;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
@@ -23,25 +23,23 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
     <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-6 md:p-10">
       {/* Subtle left-side contrast scrim so typography is crisp over live 3D arena */}
       <div
-        className="fixed inset-y-0 left-0 w-full md:w-[540px] pointer-events-none"
+        className="fixed inset-y-0 left-0 w-full md:w-[560px] pointer-events-none"
         style={{
           background:
             'linear-gradient(90deg, rgba(4,9,20,0.88) 0%, rgba(4,9,20,0.62) 65%, rgba(4,9,20,0) 100%)',
         }}
       />
 
-      {/* Top metadata line (clean unboxed text, zero pills) */}
-      <div className="relative z-10 flex items-center justify-between">
-        <div className="text-xs tracking-wider text-sky-300/80 font-mono-tabular">
-          <span>CIF65116 Komputer Grafis</span>
+      {/* Top academic metadata line (Course Code + Course Name + FILKOM UB only) */}
+      <div className="relative z-10 flex items-center justify-between gap-4">
+        <div className="text-xs tracking-wider text-sky-300/90 font-mono-tabular hud-text-shadow">
+          <span>CIF65116 · Komputer Grafis</span>
           <span className="mx-2 text-slate-500" aria-hidden="true">·</span>
-          <span>Peta 3D Nur</span>
-          <span className="mx-2 text-slate-500" aria-hidden="true">·</span>
-          <span>WebGL2 Offline</span>
+          <span className="text-slate-200">Fakultas Ilmu Komputer · Universitas Brawijaya</span>
         </div>
 
         {saveData.highScore > 0 && (
-          <div className="text-xs text-slate-300 font-mono-tabular hud-text-shadow">
+          <div className="text-xs text-slate-300 font-mono-tabular hud-text-shadow shrink-0">
             <span>Rekor Skor {saveData.highScore.toLocaleString()}</span>
             <span className="mx-2 text-slate-500" aria-hidden="true">·</span>
             <span>Menang {saveData.wins}x</span>
@@ -57,8 +55,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight text-white leading-none hud-text-shadow">
               CYBER DEFENSE
             </h1>
-            <p className="text-sm text-sky-300/90 mt-1.5">
-              Pertahankan Energy Core dari 5 gelombang serangan robot & Boss Demon King.
+            <p className="text-sm text-sky-300/90 mt-1.5 leading-snug">
+              Bangun ekonomi Data Farm, tempatkan 6 menara siber secara bebas, aktifkan Ultimate Lv.4,
+              dan tumbangkan Final Boss OMEGA-0 Rootkit di Wave {TOTAL_WAVES}.
             </p>
           </div>
         </div>
@@ -99,7 +98,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         {/* Team Attribution (quiet unboxed text) */}
         <div className="mt-8 text-xs text-slate-400 leading-relaxed">
           <div className="text-slate-300 font-medium mb-0.5">Tim Pengembang Proyek</div>
-          <span>Nur (Peta 3D & Jalur)</span>
+          <span>Nur (Desain Arena & Jalur 3D)</span>
           <span className="mx-1.5 text-slate-600">·</span>
           <span>Ucup (Tower, Combat & Shader)</span>
           <span className="mx-1.5 text-slate-600">·</span>
@@ -111,15 +110,15 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       {/* Bottom Flat Control Hint Line */}
       <div className="relative z-10 text-xs text-slate-400 font-mono-tabular hud-text-shadow">
-        Enter / Space Mulai · Klik Slot Bangun Menara · 1-4 Pilih Menara · WASD / Klik-Kanan Kamera · G Lab Grafika
+        1-6 Pilih Menara · Klik Bebas di Arena (Pad + = Overclock) · Q/E/R/T/Y/F Ultimate Lv.4 · WASD / Klik-Kanan Kamera · G Lab Grafika
       </div>
 
       {/* How to Play Modal */}
       {modal === 'howto' && (
         <div className="fixed inset-0 z-40 pointer-events-auto flex items-center justify-center bg-slate-950/75 p-4">
-          <div className="cyber-panel rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6">
+          <div className="cyber-panel rounded-lg max-w-3xl w-full max-h-[86vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h2 className="font-display text-xl font-bold text-white">Panduan Bermain & Target CPMK</h2>
+              <h2 className="font-display text-xl font-bold text-white">Panduan Strategi & Target CPMK</h2>
               <button
                 type="button"
                 aria-label="Tutup panduan"
@@ -131,19 +130,27 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             </div>
 
             <div className="mt-4 space-y-5 text-sm text-slate-300">
-              <div>
-                <h3 className="text-cyan-300 font-semibold mb-1.5">Alur Pertahanan</h3>
-                <p className="leading-relaxed">
-                  Pilih jenis menara di panel bawah (tombol <span className="font-mono-tabular text-white">1–4</span>),
-                  lalu klik salah satu dari <strong className="text-white">9 slot bercahaya</strong> di sepanjang
-                  jalur kurva 3D milik Nur. Klik menara yang sudah dibangun untuk melakukan
-                  <strong className="text-white"> Upgrade (hingga Lv.3)</strong>, mengganti mode targeting
-                  (<span className="text-white">Front Most / Lowest HP / Closest</span>), atau menjualnya (refund 70%).
-                </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-slate-900/80 border border-slate-800 rounded-md p-3.5">
+                  <h3 className="text-cyan-300 font-semibold mb-1">Penempatan Bebas & Overclock Node</h3>
+                  <p className="text-xs leading-relaxed text-slate-300">
+                    Pilih menara (<span className="font-mono-tabular text-white">1–6</span>) lalu klik area
+                    kosong mana saja di dek arena! Letakkan di atas <strong className="text-amber-300">9 Pad + bercahaya</strong> untuk
+                    bonus <strong className="text-white">+15% Jangkauan & +12% Kecepatan Tembak</strong>.
+                  </p>
+                </div>
+                <div className="bg-slate-900/80 border border-slate-800 rounded-md p-3.5">
+                  <h3 className="text-amber-300 font-semibold mb-1">Farming, 4-Tier Upgrade & Ultimate</h3>
+                  <p className="text-xs leading-relaxed text-slate-300">
+                    Bangun <strong className="text-emerald-300">Quantum Data Farm</strong> di awal untuk panen Gold rutin
+                    tiap siklus & dividen wave. Upgrade menara hingga <strong className="text-amber-300">Lv.4 APEX</strong> untuk
+                    membuka <strong className="text-white">Active Ultimate</strong> (<span className="font-mono-tabular">Q/E/R/T/Y/F</span>)!
+                  </p>
+                </div>
               </div>
 
               <div>
-                <h3 className="text-cyan-300 font-semibold mb-2">4 Jenis Menara Pertahanan</h3>
+                <h3 className="text-cyan-300 font-semibold mb-2">6 Menara Pertahanan Siber & Ultimate Lv.4</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {TOWER_ORDER.map((id) => {
                     const t = TOWER_PRESETS[id];
@@ -152,12 +159,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         <TowerSilhouetteIcon type={id} className="w-8 h-8 shrink-0 mt-0.5" />
                         <div className="min-w-0">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold text-white">{t.displayName}</span>
+                            <span className="font-semibold text-white">[{t.keyHint}] {t.displayName}</span>
                             <span className="font-mono-tabular text-amber-300 text-xs">{t.baseCost}G</span>
                           </div>
                           <div className="text-xs text-slate-400 mt-0.5">{t.description}</div>
-                          <div className="text-xs font-mono-tabular text-slate-500 mt-1">
-                            DMG {t.baseDamage} · RNG {t.baseRangeGdd} · {t.fireRateSec}s
+                          <div className="text-[11px] font-mono-tabular text-amber-300/90 mt-1">
+                            ULT [{t.ultimate.hotkey}]: {t.ultimate.name}
                           </div>
                         </div>
                       </div>
@@ -167,16 +174,26 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               </div>
 
               <div>
-                <h3 className="text-cyan-300 font-semibold mb-2">4 Tipe Musuh (HP Naik ×1.25 per Wave)</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <h3 className="text-cyan-300 font-semibold mb-2">
+                  6 Entitas Malware & Ancaman Siber (15 Wave · 3 Stage + Final Stage)
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                   {Object.values(ENEMY_PRESETS).map((e) => (
-                    <div key={e.id} className="bg-slate-900/80 border border-slate-800 rounded-md p-2.5">
+                    <div
+                      key={e.id}
+                      className={`rounded-md p-2.5 border ${
+                        e.isFinalBoss
+                          ? 'bg-rose-950/60 border-rose-500/60'
+                          : e.isBoss
+                          ? 'bg-amber-950/40 border-amber-500/50'
+                          : 'bg-slate-900/80 border-slate-800'
+                      }`}
+                    >
                       <div className="font-semibold text-white">{e.displayName}</div>
                       <div className="text-slate-400 mt-0.5">{e.role}</div>
-                      <div className="font-mono-tabular text-slate-300 mt-1.5">
-                        HP {e.baseHp} · ARM {e.armor}
+                      <div className="font-mono-tabular text-slate-300 mt-1">
+                        HP {e.baseHp} · ARM {e.armor} · +{e.rewardGold}G
                       </div>
-                      <div className="font-mono-tabular text-amber-300">+{e.rewardGold}G</div>
                     </div>
                   ))}
                 </div>
@@ -212,20 +229,20 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label htmlFor="audio-vol" className="text-sm font-medium text-slate-200">
-                    Volume Efek Suara
+                    Volume Master (SFX & Musik)
                   </label>
                   <span className="font-mono-tabular text-xs text-cyan-300">
-                    {saveData.muted ? 'Bisukan' : `${Math.round(saveData.volume * 100)}%`}
+                    {saveData.muted ? 'SFX Bisukan' : `${Math.round(saveData.volume * 100)}%`}
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    aria-label={saveData.muted ? 'Aktifkan suara' : 'Bisukan suara'}
-                    onClick={() => onUpdateAudio(saveData.volume, !saveData.muted)}
+                    aria-label={saveData.muted ? 'Aktifkan SFX' : 'Bisukan SFX'}
+                    onClick={() => onUpdateAudio(saveData.volume, !saveData.muted, saveData.musicMuted)}
                     className="p-2 rounded bg-slate-900 border border-slate-700 text-cyan-300 hover:border-cyan-400 cursor-pointer"
                   >
-                    {saveData.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                    {saveData.muted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
                   </button>
                   <input
                     id="audio-vol"
@@ -234,14 +251,35 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     max={1}
                     step={0.05}
                     value={saveData.volume}
-                    onChange={(e) => onUpdateAudio(parseFloat(e.target.value), false)}
+                    onChange={(e) => onUpdateAudio(parseFloat(e.target.value), false, saveData.musicMuted)}
                     className="w-full accent-cyan-400 cursor-pointer"
                   />
                 </div>
               </div>
 
+              <div className="flex items-center justify-between bg-slate-900/80 border border-slate-800 rounded-md px-3.5 py-2.5">
+                <div className="flex items-center gap-2.5">
+                  <Music className={`w-4 h-4 ${saveData.musicMuted ? 'text-slate-500' : 'text-cyan-400'}`} />
+                  <div>
+                    <div className="text-sm font-medium text-slate-200">Musik Synthwave Adaptif</div>
+                    <div className="text-[11px] text-slate-400">Berubah intensitas saat wave & Boss</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onUpdateAudio(saveData.volume, saveData.muted, !saveData.musicMuted)}
+                  className={`px-3 py-1.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                    saveData.musicMuted
+                      ? 'bg-slate-800 text-slate-400 hover:text-white'
+                      : 'bg-cyan-400 text-slate-950'
+                  }`}
+                >
+                  {saveData.musicMuted ? 'Mati' : 'Aktif'}
+                </button>
+              </div>
+
               <div className="pt-4 border-t border-slate-800">
-                <div className="text-xs font-medium text-slate-400 mb-3">Statistik Tersimpan (Offline)</div>
+                <div className="text-xs font-medium text-slate-400 mb-3">Statistik Tersimpan</div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="bg-slate-900/80 border border-slate-800 rounded p-3">
                     <div className="text-xs text-slate-400">High Score</div>
@@ -252,11 +290,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   <div className="bg-slate-900/80 border border-slate-800 rounded p-3">
                     <div className="text-xs text-slate-400">Wave Tertinggi</div>
                     <div className="font-mono-tabular text-lg font-bold text-cyan-300 mt-0.5">
-                      {saveData.highestWave} / 5
+                      {saveData.highestWave} / {TOTAL_WAVES}
                     </div>
                   </div>
                   <div className="bg-slate-900/80 border border-slate-800 rounded p-3">
-                    <div className="text-xs text-slate-400">Musuh Dikalahkan</div>
+                    <div className="text-xs text-slate-400">Malware Dibasmi</div>
                     <div className="font-mono-tabular text-lg font-bold text-white mt-0.5">
                       {saveData.totalEnemiesDefeated}
                     </div>

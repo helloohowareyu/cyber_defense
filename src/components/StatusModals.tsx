@@ -26,7 +26,7 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
         <div className="cyber-panel rounded-lg max-w-sm w-full p-6 text-center">
           <h2 className="font-display text-2xl font-bold text-white">Permainan Dijeda</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Wave {hud.wave}/{hud.totalWaves} · Gold {hud.gold}G · Core HP {hud.coreHp}/{hud.maxCoreHp}
+            {hud.stageLabel} · Wave {hud.wave}/{hud.totalWaves} · Gold {hud.gold}G
           </p>
 
           <div className="mt-6 flex flex-col gap-2.5">
@@ -77,12 +77,12 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
             )}
           </div>
           <h2 className="font-display text-3xl font-bold text-white">
-            {isVictory ? 'VICTORY' : 'GAME OVER'}
+            {isVictory ? 'VICTORY' : 'SYSTEM BREACH'}
           </h2>
           <p className="text-sm text-slate-300 mt-1">
             {isVictory
-              ? 'Seluruh 5 wave dan Boss Demon King berhasil dihancurkan. Energy Core aman!'
-              : 'Energy Core hancur sebelum seluruh gelombang musuh selesai.'}
+              ? `Final Boss OMEGA-0 Rootkit dan seluruh ${hud.totalWaves} wave serangan siber berhasil ditumpas. Energy Core terlindungi!`
+              : 'Energy Core ditembus gelombang malware sebelum Final Stage selesai.'}
           </p>
 
           <div className="mt-5 grid grid-cols-3 gap-2.5 text-left">
@@ -93,7 +93,7 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
               </div>
             </div>
             <div className="bg-slate-900/90 border border-slate-800 rounded p-3">
-              <div className="text-[11px] text-slate-400">Dikalahkan</div>
+              <div className="text-[11px] text-slate-400">Dibasmi</div>
               <div className="font-mono-tabular text-lg font-bold text-white mt-0.5">
                 {hud.enemiesDefeated}
               </div>

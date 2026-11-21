@@ -1,11 +1,10 @@
-// Faithful TypeScript port of Nur's original 3D map system:
-// - src/nur/node_3d.tscn (32x18 Cyber Arena + 7x5 Cyan/Magenta Circuit Grid)
-// - src/nur/base_musuh_static_body_3d.gd (BaseMusuh at x = -14.4, z = 0)
-// - src/nur/base_utama_static_body_3d.gd (BaseUtama at x = +14.14, z = 0)
-// - src/nur/sistem_jalur_node_3d.gd (8-point Cubic Bezier Curve3D path)
-// - src/nur/slot_menara_3d.gd (9 strategic tower slots snapped 0.5m from road edge)
+// Expanded 3D Cyber Arena faithful to Nur's original design (`src/nur/`):
+// - Extended 40m x 24m Cyber Circuit Deck (preserving Nur's cyan/magenta grid & 2-layer Bezier road)
+// - Much longer 3-loop multi-switchback Cubic Bezier path (~78m) for rich BTD6-style tower coverage
+// - Nur's 9 Overclock Bonus Pads computed via `_posisikan_tepat_0_5_dari_jalan()` algorithm
+// - Free Tower Placement validation anywhere on the arena deck with road/base/tower collision clearance!
 
-import { Vec3Like } from './combatMath';
+import { distanceXZ, Vec3Like } from './combatMath';
 
 export interface BezierControlPoint {
   pos: Vec3Like;
@@ -28,73 +27,98 @@ export interface NurSlotData {
   padSize: number;
 }
 
-// Nur's exact arena constants (src/nur/node_3d.tscn)
-export const NUR_ARENA_WIDTH = 32.0; // lebar_kotak
-export const NUR_ARENA_LENGTH = 18.0; // panjang_kotak
-export const NUR_ROAD_HALF_WIDTH = 1.05; // lebar_jalur
-export const NUR_NEON_HALF_WIDTH = 1.25; // lebar_jalur + 0.2
-export const NUR_SLOT_PAD_SIZE = 1.3; // ukuran_pad
-export const NUR_SLOT_CLEARANCE = 0.5; // jarak_dari_jalan
+export interface PlacementValidation {
+  valid: boolean;
+  reason: 'ok' | 'out_of_bounds' | 'on_road' | 'near_base' | 'tower_overlap';
+  snappedPosition: Vec3Like;
+  overclockPadId: number | null;
+}
 
-// Nur's exact base coordinates
-export const NUR_BASE_MUSUH_POS: Vec3Like = { x: -14.4, y: 0, z: 0 };
-export const NUR_BASE_UTAMA_POS: Vec3Like = { x: 14.14, y: 0, z: 0 };
+// Expanded Cyber Arena constants preserving Nur's proportions & visual language
+export const NUR_ARENA_WIDTH = 40.0; // expanded from 32m -> 40m
+export const NUR_ARENA_LENGTH = 24.0; // expanded from 18m -> 24m
+export const NUR_ROAD_HALF_WIDTH = 0.96; // clean cyber lane
+export const NUR_NEON_HALF_WIDTH = 1.14; // cyan neon border rail
+export const NUR_SLOT_PAD_SIZE = 1.34; // Nur's Overclock Pad footprint
+export const NUR_SLOT_CLEARANCE = 0.5; // Nur's exact 0.5m clearance from neon edge
+export const TOWER_FOOTPRINT_RADIUS = 0.72; // Free-placement tower radius
 
-// Nur's exact 8 Cubic Bezier control points (src/nur/sistem_jalur_node_3d.gd lines 138-155)
+// Base coordinates on the expanded 40m x 24m arena
+export const NUR_BASE_MUSUH_POS: Vec3Like = { x: -18.0, y: 0, z: 0 };
+export const NUR_BASE_UTAMA_POS: Vec3Like = { x: 17.8, y: 0, z: 0 };
+
+// Extended 10-point G1-continuous Cubic Bezier multi-switchback path (~78m long!)
+// Every control point has strictly smooth/collinear tangents so the 2-layer extruded road has zero pinch.
 export const NUR_PATH_CONTROL_POINTS: BezierControlPoint[] = [
   {
-    pos: { x: -12.4, y: 0, z: 0 }, // start_pos = BaseMusuh.x + 2.0
+    pos: { x: -15.8, y: 0, z: 0 }, // Straight exit from BaseMusuh
     inHandle: { x: 0, y: 0, z: 0 },
     outHandle: { x: 1.4, y: 0, z: 0 },
   },
   {
-    pos: { x: -10.2, y: 0, z: 0 }, // p_keluar_lurus = start_pos.x + 2.2
-    inHandle: { x: -1.2, y: 0, z: 0 },
-    outHandle: { x: 1.8, y: 0, z: -1.6 },
+    pos: { x: -13.6, y: 0, z: 0 },
+    inHandle: { x: -1.4, y: 0, z: 0 },
+    outHandle: { x: 1.8, y: 0, z: 0 },
   },
   {
-    pos: { x: -6.2, y: 0, z: -5.8 },
-    inHandle: { x: -3.2, y: 0, z: 0 },
-    outHandle: { x: 3.4, y: 0, z: 0 },
+    pos: { x: -10.2, y: 0, z: -7.6 }, // Loop 1 North Apex
+    inHandle: { x: -3.0, y: 0, z: 0 },
+    outHandle: { x: 3.0, y: 0, z: 0 },
   },
   {
-    pos: { x: -2.6, y: 0, z: -0.4 },
-    inHandle: { x: 0.4, y: 0, z: -3.2 },
-    outHandle: { x: -0.4, y: 0, z: 3.2 },
+    pos: { x: -6.8, y: 0, z: 0.2 }, // West descending straight inflection
+    inHandle: { x: -0.2, y: 0, z: -3.2 },
+    outHandle: { x: 0.2, y: 0, z: 3.2 },
   },
   {
-    pos: { x: 0.4, y: 0, z: 5.4 },
-    inHandle: { x: -3.2, y: 0, z: 0 },
-    outHandle: { x: 3.2, y: 0, z: 0 },
+    pos: { x: -3.2, y: 0, z: 7.8 }, // Loop 1 South Apex
+    inHandle: { x: -3.0, y: 0, z: 0 },
+    outHandle: { x: 3.0, y: 0, z: 0 },
   },
   {
-    pos: { x: 4.9, y: 0, z: 1.5 },
-    inHandle: { x: -1.2, y: 0, z: 1.9 },
-    outHandle: { x: 0.95, y: 0, z: -1.5 },
+    pos: { x: 0.4, y: 0, z: -0.2 }, // Center ascending inflection
+    inHandle: { x: -0.2, y: 0, z: 3.2 },
+    outHandle: { x: 0.2, y: 0, z: -3.2 },
   },
   {
-    pos: { x: 7.44, y: 0, z: 0 }, // p_masuk_lurus = end_pos.x - 4.5
-    inHandle: { x: -1.5, y: 0, z: 0 },
+    pos: { x: 4.0, y: 0, z: -7.6 }, // Loop 2 North Apex
+    inHandle: { x: -3.0, y: 0, z: 0 },
+    outHandle: { x: 3.0, y: 0, z: 0 },
+  },
+  {
+    pos: { x: 7.6, y: 0, z: 1.6 }, // East descending inflection
+    inHandle: { x: -0.3, y: 0, z: -3.4 },
+    outHandle: { x: 0.3, y: 0, z: 3.4 },
+  },
+  {
+    pos: { x: 11.0, y: 0, z: 6.4 }, // East Southern Loop before final approach
+    inHandle: { x: -2.4, y: 0, z: 0 },
     outHandle: { x: 2.2, y: 0, z: 0 },
   },
   {
-    pos: { x: 11.94, y: 0, z: 0 }, // end_pos = BaseUtama.x - 2.2
-    inHandle: { x: -2.2, y: 0, z: 0 },
+    pos: { x: 13.6, y: 0, z: 0 }, // Smooth entry onto final corridor
+    inHandle: { x: -1.4, y: 0, z: 2.2 },
+    outHandle: { x: 1.2, y: 0, z: 0 },
+  },
+  {
+    pos: { x: 15.5, y: 0, z: 0 }, // Straight approach into BaseUtama Energy Core
+    inHandle: { x: -1.0, y: 0, z: 0 },
     outHandle: { x: 0, y: 0, z: 0 },
   },
 ];
 
-// Nur's exact 9 target slot positions (src/nur/slot_menara_3d.gd lines 4-14)
+// Nur's 9 Strategic Cyber Overclock Pads (placed in prime tactical pockets along the switchbacks!)
+// Players can place towers ANYWHERE freely, OR snap onto these 9 Overclock Pads for +15% Range & +12% Speed!
 export const NUR_RAW_SLOT_TARGETS: Vec3Like[] = [
-  { x: -9.8, y: 0, z: 2.85 }, // slot1: sisi bawah pangkal keluar BaseMusuh
-  { x: -9.8, y: 0, z: -3.55 }, // slot2: sisi atas/kiri tanjakan lengkungan pertama
-  { x: -6.4, y: 0, z: -2.55 }, // slot3: sisi bawah/dalam lengkungan atas
-  { x: -2.6, y: 0, z: -5.85 }, // slot4: sisi atas puncak lengkungan besar
-  { x: -4.6, y: 0, z: 2.55 }, // slot5: sisi kiri/dalam jalur turun ke bawah
-  { x: -0.6, y: 0, z: -2.35 }, // slot6: sisi kanan/luar jalur turun ke bawah
-  { x: 5.8, y: 0, z: 3.25 }, // slot7: area bawah jalur kanan
-  { x: 1.2, y: 0, z: 3.15 }, // slot8: area tikungan bawah
-  { x: 7.6, y: 0, z: -2.35 }, // slot9: sisi atas jalur lurus menjelang BaseUtama
+  { x: -13.2, y: 0, z: 3.2 }, // Overclock Pad 1: Southern spawn gate flank
+  { x: -10.2, y: 0, z: -4.2 }, // Overclock Pad 2: Inside Loop 1 North bend (double lane coverage!)
+  { x: -6.8, y: 0, z: -4.2 }, // Overclock Pad 3: West switchback inner pocket
+  { x: -3.2, y: 0, z: 4.2 }, // Overclock Pad 4: Inside Loop 1 South bend (prime choke!)
+  { x: -2.6, y: 0, z: -3.2 }, // Overclock Pad 5: Center-West crossroad
+  { x: 4.0, y: 0, z: -4.2 }, // Overclock Pad 6: Inside Loop 2 North bend (prime choke!)
+  { x: 3.8, y: 0, z: 4.4 }, // Overclock Pad 7: Center-East tactical crossroad
+  { x: 10.8, y: 0, z: 2.8 }, // Overclock Pad 8: Inside East South bend
+  { x: 13.8, y: 0, z: -3.6 }, // Overclock Pad 9: Final Core Defense Guard
 ];
 
 function evalCubicBezier(p0: Vec3Like, c1: Vec3Like, c2: Vec3Like, p3: Vec3Like, t: number): Vec3Like {
@@ -117,7 +141,7 @@ export class NurBakedPath {
   public readonly samples: BakedPathSample[];
   public readonly totalLength: number;
 
-  constructor(controlPoints: BezierControlPoint[] = NUR_PATH_CONTROL_POINTS, stepsPerSegment = 48) {
+  constructor(controlPoints: BezierControlPoint[] = NUR_PATH_CONTROL_POINTS, stepsPerSegment = 44) {
     const rawPoints: Vec3Like[] = [];
     for (let i = 0; i < controlPoints.length - 1; i++) {
       const a = controlPoints[i];
@@ -164,9 +188,6 @@ export class NurBakedPath {
     this.totalLength = accum;
   }
 
-  /**
-   * Uniform arc-length sampling at distance `dist` along the path.
-   */
   public sampleAtDistance(dist: number): { pos: Vec3Like; tangent: Vec3Like; progress: number } {
     const clamped = Math.max(0, Math.min(this.totalLength, dist));
     const samples = this.samples;
@@ -181,7 +202,6 @@ export class NurBakedPath {
       return { pos: { ...last.pos }, tangent: { ...last.tangent }, progress: 1 };
     }
 
-    // Binary search for segment
     let lo = 0;
     let hi = samples.length - 1;
     while (lo + 1 < hi) {
@@ -210,17 +230,31 @@ export class NurBakedPath {
       progress: clamped / this.totalLength,
     };
   }
+
+  /**
+   * Computes minimum horizontal distance from a world XZ coordinate to the baked road centerline.
+   */
+  public distanceToRoadCenter(pos: Vec3Like): number {
+    let minSq = Infinity;
+    for (let i = 0; i < this.samples.length; i += 2) {
+      const s = this.samples[i].pos;
+      const dx = pos.x - s.x;
+      const dz = pos.z - s.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < minSq) minSq = dSq;
+    }
+    return Math.sqrt(minSq);
+  }
 }
 
 /**
- * Exact TypeScript port of Nur's `_posisikan_tepat_0_5_dari_jalan()` in `src/nur/slot_menara_3d.gd`.
- * Snaps each slot pad center to exact distance (halfNeonWidth + halfPad + clearance = 2.40m)
- * from the nearest point on the baked Bezier path, and orients the pad to face the road.
+ * Exact TypeScript port of Nur's `_posisikan_tepat_0_5_dari_jalan()` from `src/nur/slot_menara_3d.gd`.
+ * Computes the 9 Overclock Bonus Pads snapped cleanly 0.5m from the road neon edge.
  */
 export function buildNurTowerSlots(path: NurBakedPath): NurSlotData[] {
   const halfPad = NUR_SLOT_PAD_SIZE * 0.5;
   const exactCenterDist = NUR_NEON_HALF_WIDTH + halfPad + NUR_SLOT_CLEARANCE;
-  const steps = 240;
+  const steps = 360;
 
   return NUR_RAW_SLOT_TARGETS.map((raw, idx) => {
     let minDist = Infinity;
@@ -267,7 +301,7 @@ export function buildNurTowerSlots(path: NurBakedPath): NurSlotData[] {
 
     return {
       id: idx,
-      name: `slot${idx + 1}`,
+      name: `Node ${idx + 1}`,
       position: snappedPos,
       lookTarget: nearestPoint,
       yaw,
@@ -276,6 +310,69 @@ export function buildNurTowerSlots(path: NurBakedPath): NurSlotData[] {
   });
 }
 
-// Singleton pre-baked Nur path and slots for deterministic sharing across logic & renderer
-export const NUR_BAKED_PATH = new NurBakedPath(NUR_PATH_CONTROL_POINTS, 48);
+// Pre-baked path and Overclock Pads shared across logic, tests, and renderer
+export const NUR_BAKED_PATH = new NurBakedPath(NUR_PATH_CONTROL_POINTS, 44);
 export const NUR_TOWER_SLOTS = buildNurTowerSlots(NUR_BAKED_PATH);
+
+/**
+ * BTD6-style Free Tower Placement validator:
+ * Allows placing towers ANYWHERE on Nur's 40m x 24m Cyber Arena deck outside road, bases, and other towers.
+ * Gently magnetic-snaps onto any free Overclock Bonus Pad within 0.95m for tactical synergy!
+ */
+export function validateTowerPlacement(
+  worldPos: Vec3Like,
+  existingTowerPositions: readonly Vec3Like[],
+  path: NurBakedPath = NUR_BAKED_PATH,
+  overclockPads: readonly NurSlotData[] = NUR_TOWER_SLOTS
+): PlacementValidation {
+  let candidate: Vec3Like = { x: worldPos.x, y: 0, z: worldPos.z };
+  let overclockPadId: number | null = null;
+
+  // Magnetic snap to nearby unoccupied Overclock Pad (grants +15% Range & +12% Fire Rate!)
+  for (const pad of overclockPads) {
+    if (distanceXZ(candidate, pad.position) <= 0.98) {
+      const padOccupied = existingTowerPositions.some((tp) => distanceXZ(tp, pad.position) < 1.15);
+      if (!padOccupied) {
+        candidate = { x: pad.position.x, y: 0, z: pad.position.z };
+        overclockPadId = pad.id;
+      }
+      break;
+    }
+  }
+
+  // 1. Arena deck bounds check (margin inside border rails)
+  const maxX = NUR_ARENA_WIDTH * 0.5 - 1.35;
+  const maxZ = NUR_ARENA_LENGTH * 0.5 - 1.25;
+  if (Math.abs(candidate.x) > maxX || Math.abs(candidate.z) > maxZ) {
+    return { valid: false, reason: 'out_of_bounds', snappedPosition: candidate, overclockPadId: null };
+  }
+
+  // 2. BaseMusuh & BaseUtama exclusion zones
+  if (
+    (Math.abs(candidate.x - NUR_BASE_MUSUH_POS.x) < 3.4 && Math.abs(candidate.z) < 3.0) ||
+    (Math.abs(candidate.x - NUR_BASE_UTAMA_POS.x) < 3.6 && Math.abs(candidate.z) < 3.3)
+  ) {
+    return { valid: false, reason: 'near_base', snappedPosition: candidate, overclockPadId: null };
+  }
+
+  // 3. Road clearance check (must not overlap extruded neon road ribbon)
+  const minRoadDist = NUR_NEON_HALF_WIDTH + TOWER_FOOTPRINT_RADIUS + 0.06;
+  if (path.distanceToRoadCenter(candidate) < minRoadDist) {
+    return { valid: false, reason: 'on_road', snappedPosition: candidate, overclockPadId: null };
+  }
+
+  // 4. Existing tower footprint collision check
+  const minTowerDist = TOWER_FOOTPRINT_RADIUS * 2 + 0.14;
+  for (const tp of existingTowerPositions) {
+    if (distanceXZ(candidate, tp) < minTowerDist) {
+      return { valid: false, reason: 'tower_overlap', snappedPosition: candidate, overclockPadId: null };
+    }
+  }
+
+  return {
+    valid: true,
+    reason: 'ok',
+    snappedPosition: candidate,
+    overclockPadId,
+  };
+}

@@ -1,9 +1,9 @@
-// Procedural BufferGeometry (VAO/VBO) + Composite 3-12 Part Tower & Enemy Models
-// Port of Yusuf's res://src/combat/graphics/procedural_mesh_builder.gd
-// plus high-craft multi-part 3D silhouettes for all 4 Towers and 4 Enemies.
+// Procedural BufferGeometry (VAO/VBO) + Composite 3D Models for:
+// - 6 Cyber Defense Towers (Laser, Cannon, Freeze, Railgun, Tesla Arc Relay, Quantum Data Farm) with Lv.1-4 tier evolution
+// - 6 100% Cyber-Themed Enemies (Bit-Crawler, Zero-Day Worm, Packet Phantom, Trojan Juggernaut, Firewall Breaker, OMEGA-0 Rootkit Boss)
 
 import * as THREE from 'three';
-import { EnemyType, TowerType, TOWER_PRESETS, ENEMY_PRESETS } from '../game/constants';
+import { ENEMY_PRESETS, EnemyType, TOWER_PRESETS, TowerType } from '../game/constants';
 import { createBlinnPhongCrystalMaterial } from './shaders';
 
 /**
@@ -35,29 +35,21 @@ export function buildRangeRingGeometry(
     const v0 = i * 2;
     const v1 = i * 2 + 1;
 
-    // Inner vertex
     positions[v0 * 3] = cosA * innerRadius;
     positions[v0 * 3 + 1] = 0.04;
     positions[v0 * 3 + 2] = sinA * innerRadius;
     normals[v0 * 3 + 1] = 1;
     uvs[v0 * 2] = ratio;
     uvs[v0 * 2 + 1] = 0;
-    colors[v0 * 4] = innerColor[0];
-    colors[v0 * 4 + 1] = innerColor[1];
-    colors[v0 * 4 + 2] = innerColor[2];
-    colors[v0 * 4 + 3] = innerColor[3];
+    colors.set(innerColor, v0 * 4);
 
-    // Outer vertex
     positions[v1 * 3] = cosA * outerRadius;
     positions[v1 * 3 + 1] = 0.04;
     positions[v1 * 3 + 2] = sinA * outerRadius;
     normals[v1 * 3 + 1] = 1;
     uvs[v1 * 2] = ratio;
     uvs[v1 * 2 + 1] = 1;
-    colors[v1 * 4] = outerColor[0];
-    colors[v1 * 4 + 1] = outerColor[1];
-    colors[v1 * 4 + 2] = outerColor[2];
-    colors[v1 * 4 + 3] = outerColor[3];
+    colors.set(outerColor, v1 * 4);
   }
 
   for (let i = 0; i < count; i++) {
@@ -76,7 +68,7 @@ export function buildRangeRingGeometry(
 
 /**
  * Port of ProceduralMeshBuilder.build_aoe_shockwave_disc()
- * Triangle fan disc on XZ plane with barycentric RGBA color interpolation for Cannon AoE blasts.
+ * Triangle fan disc on XZ plane with barycentric RGBA color interpolation for Plasma/EMP blasts.
  */
 export function buildAoeShockwaveGeometry(
   radius: number,
@@ -92,7 +84,6 @@ export function buildAoeShockwaveGeometry(
   const colors = new Float32Array(vertCount * 4);
   const indices: number[] = [];
 
-  // Center vertex
   positions[1] = 0.16;
   normals[1] = 1;
   uvs[0] = 0.5;
@@ -134,13 +125,14 @@ export interface TowerRig {
   recoilGroup: THREE.Group;
   muzzleLocal: THREE.Vector3;
   spinNode?: THREE.Object3D;
+  apexRing: THREE.Mesh; // Lv.4 APEX Ultimate floating halo
   phongMaterials: THREE.ShaderMaterial[];
-  upgradeNodes: THREE.Object3D[];
+  upgradeNodes: THREE.Object3D[]; // [Lv2, Lv3, Lv4]
+  hitMesh: THREE.Mesh;
 }
 
 /**
- * Builds a composite 6-10 part 3D Tower model (bottom-center pivoted at y = 0.08 on top of Nur's pad).
- * Uses varied PBR roughness/metalness + custom Blinn-Phong shader accents.
+ * Builds composite 3D Tower rigs for all 6 Cyber Defense towers with Lv.1-4 tier evolution.
  */
 export function buildTowerRig(type: TowerType): TowerRig {
   const preset = TOWER_PRESETS[type];
@@ -168,20 +160,27 @@ export function buildTowerRig(type: TowerType): TowerRig {
   const matAccent = new THREE.MeshStandardMaterial({
     color: preset.accentColor,
     emissive: preset.accentColor,
-    emissiveIntensity: 1.4,
+    emissiveIntensity: 1.1,
     metalness: 0.3,
+    roughness: 0.22,
+  });
+  const matApexGold = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 1.15,
+    metalness: 0.6,
     roughness: 0.2,
   });
   const matPhong = createBlinnPhongCrystalMaterial({
     baseColor: preset.accentColor,
     rimColor: 0xe0f7ff,
     shininess: 64,
-    specularStrength: 1.5,
+    specularStrength: 1.45,
   });
   phongMaterials.push(matPhong);
 
   // Common octagonal armored plinth
-  const basePlinth = new THREE.Mesh(new THREE.CylinderGeometry(0.54, 0.62, 0.24, 8), matHullDark);
+  const basePlinth = new THREE.Mesh(new THREE.CylinderGeometry(0.54, 0.64, 0.24, 8), matHullDark);
   basePlinth.position.y = 0.12;
   basePlinth.castShadow = true;
   basePlinth.receiveShadow = true;
@@ -192,33 +191,42 @@ export function buildTowerRig(type: TowerType): TowerRig {
   collar.castShadow = true;
   root.add(collar);
 
-  const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.49, 0.035, 8, 24), matAccent);
+  const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.035, 8, 24), matAccent);
   baseRing.rotation.x = Math.PI / 2;
   baseRing.position.y = 0.23;
   root.add(baseRing);
 
-  // Level 2 & Level 3 visual upgrade ornaments (toggled as tower upgrades)
-  const lv2Crown = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.03, 8, 8), matAccent);
+  // Lv.2 Upgrade Ring
+  const lv2Crown = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.032, 8, 8), matAccent);
   lv2Crown.rotation.x = Math.PI / 2;
   lv2Crown.position.y = 0.38;
   lv2Crown.visible = false;
   root.add(lv2Crown);
   upgradeNodes.push(lv2Crown);
 
+  // Lv.3 Upgrade Stabilizer Fins
   const lv3Halo = new THREE.Group();
   for (let i = 0; i < 4; i++) {
     const angle = (i * Math.PI) / 2 + Math.PI / 4;
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.42, 0.18), matHullMid);
-    fin.position.set(Math.cos(angle) * 0.52, 0.36, Math.sin(angle) * 0.52);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.44, 0.18), matHullMid);
+    fin.position.set(Math.cos(angle) * 0.54, 0.38, Math.sin(angle) * 0.54);
     fin.rotation.y = -angle;
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.14), matAccent);
-    tip.position.set(Math.cos(angle) * 0.55, 0.56, Math.sin(angle) * 0.55);
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.14, 0.14), matAccent);
+    tip.position.set(Math.cos(angle) * 0.57, 0.58, Math.sin(angle) * 0.57);
     tip.rotation.y = -angle;
     lv3Halo.add(fin, tip);
   }
   lv3Halo.visible = false;
   root.add(lv3Halo);
   upgradeNodes.push(lv3Halo);
+
+  // Lv.4 APEX Ultimate Floating Gold/Accent Halo
+  const apexRing = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.04, 8, 28), matApexGold);
+  apexRing.rotation.x = Math.PI / 2;
+  apexRing.position.y = 1.48;
+  apexRing.visible = false;
+  root.add(apexRing);
+  upgradeNodes.push(apexRing);
 
   turretHead.position.y = 0.42;
   root.add(turretHead);
@@ -228,7 +236,6 @@ export function buildTowerRig(type: TowerType): TowerRig {
   let spinNode: THREE.Object3D | undefined;
 
   if (type === 'laser') {
-    // Laser Tower: Rotating prism cradle + Blinn-Phong core lens + twin emitter prongs
     const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.26, 0.52), matHullMid);
     yoke.position.y = 0.18;
     yoke.castShadow = true;
@@ -255,7 +262,6 @@ export function buildTowerRig(type: TowerType): TowerRig {
     }
     muzzleLocal = new THREE.Vector3(0, 0.74, 0.72);
   } else if (type === 'cannon') {
-    // Cannon Tower: Armored artillery turret + twin-band heavy barrel + ammo drum
     const breach = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.4, 0.66), matHullMid);
     breach.position.set(0, 0.24, -0.06);
     breach.castShadow = true;
@@ -284,7 +290,6 @@ export function buildTowerRig(type: TowerType): TowerRig {
 
     muzzleLocal = new THREE.Vector3(0, 0.72, 1.0);
   } else if (type === 'freeze') {
-    // Freeze Tower: 3 cryo stabilizer prongs + levitating spinning Blinn-Phong frost crystal
     const cryoCore = new THREE.Group();
     cryoCore.position.y = 0.68;
 
@@ -313,8 +318,7 @@ export function buildTowerRig(type: TowerType): TowerRig {
     }
 
     muzzleLocal = new THREE.Vector3(0, 1.1, 0);
-  } else {
-    // Armor Pen Tower: Sleek electromagnetic twin-rail sniper cannon
+  } else if (type === 'armor_pen') {
     const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.32, 0.76), matHullDark);
     chassis.position.set(0, 0.22, -0.05);
     chassis.castShadow = true;
@@ -343,7 +347,71 @@ export function buildTowerRig(type: TowerType): TowerRig {
     recoilGroup.add(scope);
 
     muzzleLocal = new THREE.Vector3(0, 0.74, 1.14);
+  } else if (type === 'tesla') {
+    // Tesla Arc Relay: Central high-voltage spire + 3 stacked induction torus coils + glowing arc sphere
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.22, 0.92, 10), matHullMid);
+    spire.position.y = 0.46;
+    spire.castShadow = true;
+    turretHead.add(spire);
+
+    for (let i = 0; i < 3; i++) {
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.34 - i * 0.05, 0.045, 8, 20), matAccent);
+      coil.rotation.x = Math.PI / 2;
+      coil.position.y = 0.24 + i * 0.24;
+      turretHead.add(coil);
+    }
+
+    const orbGroup = new THREE.Group();
+    orbGroup.position.y = 1.04;
+    const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), matPhong);
+    const orbitRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.025, 8, 20), matAccent);
+    orbitRing.rotation.x = Math.PI / 4;
+    orbGroup.add(orb, orbitRing);
+    turretHead.add(orbGroup);
+    spinNode = orbGroup;
+
+    muzzleLocal = new THREE.Vector3(0, 1.46, 0);
+  } else {
+    // Quantum Data Farm: Hexagonal server vault + floating spinning emerald data prism & orbiting cubes
+    const vault = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.52, 0.44, 6), matHullMid);
+    vault.position.y = 0.22;
+    vault.castShadow = true;
+    turretHead.add(vault);
+
+    for (let i = 0; i < 3; i++) {
+      const ang = (i * Math.PI * 2) / 3;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.52, 0.22), matHullDark);
+      blade.position.set(Math.cos(ang) * 0.44, 0.34, Math.sin(ang) * 0.44);
+      blade.rotation.y = -ang;
+      const led = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.32, 0.06), matAccent);
+      led.position.set(Math.cos(ang) * 0.48, 0.36, Math.sin(ang) * 0.48);
+      led.rotation.y = -ang;
+      turretHead.add(blade, led);
+    }
+
+    const dataCore = new THREE.Group();
+    dataCore.position.y = 0.86;
+    const holoCube = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), matPhong);
+    dataCore.add(holoCube);
+    for (let i = 0; i < 3; i++) {
+      const ang = (i * Math.PI * 2) / 3;
+      const packet = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.11), matAccent);
+      packet.position.set(Math.cos(ang) * 0.44, 0.05, Math.sin(ang) * 0.44);
+      dataCore.add(packet);
+    }
+    turretHead.add(dataCore);
+    spinNode = dataCore;
+
+    muzzleLocal = new THREE.Vector3(0, 1.28, 0);
   }
+
+  // Click hit proxy for selecting any freely placed tower cleanly
+  const hitMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.75, 0.78, 1.55, 8),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  hitMesh.position.y = 0.78;
+  root.add(hitMesh);
 
   return {
     root,
@@ -351,8 +419,10 @@ export function buildTowerRig(type: TowerType): TowerRig {
     recoilGroup,
     muzzleLocal,
     spinNode,
+    apexRing,
     phongMaterials,
     upgradeNodes,
+    hitMesh,
   };
 }
 
@@ -365,11 +435,17 @@ export interface EnemyRig {
   flashMaterials: THREE.MeshStandardMaterial[];
   shadowDisc: THREE.Mesh;
   crownOrWings?: THREE.Object3D;
+  secondaryRing?: THREE.Object3D;
 }
 
 /**
- * Builds composite 4-9 part procedural Enemy 3D meshes (Goblin, Orc, Harpy, Demon King Boss)
- * with contact shadow grounding, frozen Blinn-Phong crystal shell, and overhead 3D HP bar.
+ * Builds composite procedural 3D Cyber-Defense Enemy meshes:
+ * - Bit-Crawler (Hexagonal Malware Spider Drone)
+ * - Zero-Day Worm (Fast Crystalline Micro-Virus)
+ * - Packet Phantom (Swept-Wing Hover Interceptor)
+ * - Trojan Juggernaut (Heavy Armored Security-Breach Mech)
+ * - Firewall Breaker (Stage 2 Mid-Boss Hover Dreadnought)
+ * - OMEGA-0 Rootkit (Final Stage Boss Cyber-Citadel Monolith)
  */
 export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyRig {
   const preset = ENEMY_PRESETS[type];
@@ -379,25 +455,24 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
 
   const matPrimary = new THREE.MeshStandardMaterial({
     color: preset.primaryColor,
-    metalness: 0.42,
-    roughness: 0.45,
+    metalness: 0.58,
+    roughness: 0.36,
   });
   const matDark = new THREE.MeshStandardMaterial({
-    color: 0x0f172a,
-    metalness: 0.75,
-    roughness: 0.32,
+    color: 0x0b1324,
+    metalness: 0.82,
+    roughness: 0.28,
   });
   const matAccent = new THREE.MeshStandardMaterial({
     color: preset.accentColor,
     emissive: preset.accentColor,
-    emissiveIntensity: 1.6,
+    emissiveIntensity: 1.15,
     metalness: 0.25,
     roughness: 0.2,
   });
   const flashMaterials = [matPrimary, matDark];
 
-  // Ground contact shadow disc (sits at road surface y = 0.135)
-  const shadowSize = preset.isBoss ? 1.85 : type === 'orc' ? 1.25 : 0.95;
+  const shadowSize = preset.isFinalBoss ? 2.5 : preset.isBoss ? 1.85 : type === 'trojan_brute' ? 1.3 : 0.92;
   const shadowDisc = new THREE.Mesh(
     new THREE.PlaneGeometry(shadowSize, shadowSize),
     new THREE.MeshBasicMaterial({
@@ -412,170 +487,207 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
   root.add(shadowDisc);
 
   let crownOrWings: THREE.Object3D | undefined;
+  let secondaryRing: THREE.Object3D | undefined;
   let hpBarY = 1.35;
 
-  if (type === 'goblin') {
-    // Agile cyber-scout bot
-    for (const sx of [-0.14, 0.14]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.34, 0.14), matDark);
-      leg.position.set(sx, 0.17, 0);
-      leg.castShadow = true;
-      bodyGroup.add(leg);
+  if (type === 'bit_crawler') {
+    // Hexagonal Cyber Arachnid Malware Drone
+    const carapace = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.22, 6), matDark);
+    carapace.position.set(0, 0.36, 0);
+    carapace.castShadow = true;
+    bodyGroup.add(carapace);
+
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), matPrimary);
+    core.position.set(0, 0.5, 0);
+    bodyGroup.add(core);
+
+    const eyeVisor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.08, 0.12), matAccent);
+    eyeVisor.position.set(0, 0.4, 0.32);
+    bodyGroup.add(eyeVisor);
+
+    // 4 articulated cyber spider legs
+    for (const sx of [-1, 1]) {
+      for (const sz of [-0.22, 0.22]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.07, 0.08), matPrimary);
+        leg.position.set(sx * 0.36, 0.2, sz);
+        leg.rotation.z = sx * -0.55;
+        leg.castShadow = true;
+        bodyGroup.add(leg);
+      }
     }
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.38, 0.34), matPrimary);
-    torso.position.set(0, 0.5, 0.04);
-    torso.rotation.x = 0.18;
-    torso.castShadow = true;
-    bodyGroup.add(torso);
+    hpBarY = 1.15;
+  } else if (type === 'worm_swarm') {
+    // Zero-Day Worm: Sleek darting micro-virus diamond cluster
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.64, 4), matPrimary);
+    nose.rotation.x = Math.PI / 2;
+    nose.position.set(0, 0.38, 0.08);
+    nose.castShadow = true;
+    bodyGroup.add(nose);
 
-    const head = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), matDark);
-    head.position.set(0, 0.76, 0.14);
-    head.castShadow = true;
-    bodyGroup.add(head);
+    const tail = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), matAccent);
+    tail.position.set(0, 0.38, -0.32);
+    bodyGroup.add(tail);
 
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.12), matAccent);
-    visor.position.set(0, 0.77, 0.27);
-    bodyGroup.add(visor);
-
-    const spineFin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.26), matAccent);
-    spineFin.position.set(0, 0.66, -0.14);
-    bodyGroup.add(spineFin);
-    hpBarY = 1.22;
-  } else if (type === 'orc') {
-    // Heavy Armored Juggernaut Mech
-    for (const sx of [-0.24, 0.24]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.44, 0.26), matDark);
-      leg.position.set(sx, 0.22, 0);
-      leg.castShadow = true;
-      bodyGroup.add(leg);
-    }
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.62, 0.58), matPrimary);
-    hull.position.set(0, 0.7, 0);
-    hull.castShadow = true;
-    bodyGroup.add(hull);
-
-    // Heavy armored shoulder shields (visual cue for 10 Armor!)
-    for (const sx of [-0.46, 0.46]) {
-      const pauldron = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.44, 0.52), matDark);
-      pauldron.position.set(sx, 0.84, 0.02);
-      pauldron.castShadow = true;
-      bodyGroup.add(pauldron);
-    }
-    const chestCore = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.22, 0.12), matAccent);
-    chestCore.position.set(0, 0.72, 0.28);
-    bodyGroup.add(chestCore);
-
-    const helm = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.28, 0.34), matDark);
-    helm.position.set(0, 1.12, 0.06);
-    helm.castShadow = true;
-    bodyGroup.add(helm);
-
-    const eyeSlit = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.08), matAccent);
-    eyeSlit.position.set(0, 1.13, 0.22);
-    bodyGroup.add(eyeSlit);
-    hpBarY = 1.56;
-  } else if (type === 'harpy') {
-    // Fast Hover Striker Drone (flies at y = 0.95)
-    bodyGroup.position.y = 0.88;
-    const fuselage = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.82, 6), matPrimary);
+    const finRing = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.03, 6, 4), matDark);
+    finRing.position.set(0, 0.38, -0.05);
+    bodyGroup.add(finRing);
+    crownOrWings = finRing;
+    hpBarY = 1.0;
+  } else if (type === 'packet_wisp') {
+    // Packet Phantom: Fast Hovering Delta-Wing Cyber Interceptor
+    bodyGroup.position.y = 0.85;
+    const fuselage = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.84, 6), matPrimary);
     fuselage.rotation.x = Math.PI / 2;
     fuselage.castShadow = true;
     bodyGroup.add(fuselage);
 
     const wings = new THREE.Group();
-    const wingL = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.05, 0.32), matDark);
-    wingL.position.set(-0.42, 0.04, -0.06);
-    wingL.rotation.z = 0.22;
-    wingL.rotation.y = 0.32;
-    wingL.castShadow = true;
+    for (const sx of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.05, 0.34), matDark);
+      wing.position.set(sx * 0.42, 0.04, -0.06);
+      wing.rotation.z = sx * -0.22;
+      wing.rotation.y = sx * -0.34;
+      wing.castShadow = true;
 
-    const wingR = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.05, 0.32), matDark);
-    wingR.position.set(0.42, 0.04, -0.06);
-    wingR.rotation.z = -0.22;
-    wingR.rotation.y = -0.32;
-    wingR.castShadow = true;
-
-    const stripL = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.06), matAccent);
-    stripL.position.set(-0.42, 0.06, 0.04);
-    stripL.rotation.z = 0.22;
-    stripL.rotation.y = 0.32;
-
-    const stripR = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.06), matAccent);
-    stripR.position.set(0.42, 0.06, 0.04);
-    stripR.rotation.z = -0.22;
-    stripR.rotation.y = -0.32;
-
-    wings.add(wingL, wingR, stripL, stripR);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.06, 0.06), matAccent);
+      strip.position.set(sx * 0.42, 0.06, 0.04);
+      strip.rotation.z = sx * -0.22;
+      strip.rotation.y = sx * -0.34;
+      wings.add(wing, strip);
+    }
     bodyGroup.add(wings);
     crownOrWings = wings;
 
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), matAccent);
-    eye.position.set(0, 0.02, 0.34);
-    bodyGroup.add(eye);
-    hpBarY = 1.65;
-  } else {
-    // DEMON KING BOSS: Towering Cyber-Titan with floating crimson crown halo
-    for (const sx of [-0.34, 0.34]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.68, 0.36), matDark);
-      leg.position.set(sx, 0.34, 0);
+    const thruster = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), matAccent);
+    thruster.position.set(0, 0.02, -0.38);
+    bodyGroup.add(thruster);
+    hpBarY = 1.6;
+  } else if (type === 'trojan_brute') {
+    // Trojan Juggernaut: Heavy Armored Cyber Breach Walker with Front Riot Shield Plates
+    for (const sx of [-0.26, 0.26]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.46, 0.28), matDark);
+      leg.position.set(sx, 0.23, 0);
       leg.castShadow = true;
       bodyGroup.add(leg);
     }
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.88, 0.76), matPrimary);
-    torso.position.set(0, 1.05, 0);
-    torso.castShadow = true;
-    bodyGroup.add(torso);
+    const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.48, 0.64, 6), matPrimary);
+    hull.position.set(0, 0.72, 0);
+    hull.castShadow = true;
+    bodyGroup.add(hull);
 
-    const furnace = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), matAccent);
-    furnace.position.set(0, 1.06, 0.36);
-    bodyGroup.add(furnace);
+    // Armored hexagonal shield pauldrons (clear cue for Armor!)
+    for (const sx of [-0.48, 0.48]) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.56, 0.54), matDark);
+      plate.position.set(sx, 0.8, 0.06);
+      plate.castShadow = true;
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.44), matAccent);
+      trim.position.set(sx, 0.96, 0.08);
+      bodyGroup.add(plate, trim);
+    }
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.12), matAccent);
+    visor.position.set(0, 0.9, 0.42);
+    bodyGroup.add(visor);
+    hpBarY = 1.62;
+  } else if (type === 'aegis_dreadnought') {
+    // STAGE 2 MID-BOSS: Firewall Breaker Hover Dreadnought
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.68, 1.38), matPrimary);
+    chassis.position.set(0, 0.76, 0);
+    chassis.castShadow = true;
+    bodyGroup.add(chassis);
 
-    for (const sx of [-0.68, 0.68]) {
-      const shoulder = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.56, 0.64), matDark);
-      shoulder.position.set(sx, 1.32, 0);
-      shoulder.castShadow = true;
-      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.52, 6), matAccent);
-      horn.position.set(sx * 1.04, 1.72, 0);
-      horn.rotation.z = sx < 0 ? 0.35 : -0.35;
-      bodyGroup.add(shoulder, horn);
+    const upperDeck = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.72, 0.42, 6), matDark);
+    upperDeck.position.set(0, 1.24, -0.08);
+    upperDeck.castShadow = true;
+    bodyGroup.add(upperDeck);
+
+    // Twin front energy cores
+    for (const sx of [-0.3, 0.3]) {
+      const core = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.14), matAccent);
+      core.position.set(sx, 0.78, 0.7);
+      bodyGroup.add(core);
     }
 
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.42, 0.46), matDark);
-    head.position.set(0, 1.68, 0.08);
-    head.castShadow = true;
-    bodyGroup.add(head);
+    // Orbiting Aegis Shield Ring
+    const shieldRing = new THREE.Group();
+    shieldRing.position.set(0, 1.05, 0);
+    for (let i = 0; i < 4; i++) {
+      const ang = (i * Math.PI) / 2;
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.44, 0.52), matDark);
+      panel.position.set(Math.cos(ang) * 0.95, 0, Math.sin(ang) * 0.95);
+      panel.rotation.y = -ang;
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.48), matAccent);
+      edge.position.set(Math.cos(ang) * 0.97, 0.2, Math.sin(ang) * 0.97);
+      edge.rotation.y = -ang;
+      shieldRing.add(panel, edge);
+    }
+    bodyGroup.add(shieldRing);
+    crownOrWings = shieldRing;
+    hpBarY = 2.2;
+  } else {
+    // FINAL STAGE BOSS: OMEGA-0 ROOTKIT OVERLORD
+    // Towering Obsidian & Crimson Cyber-Citadel Core with Dual Counter-Rotating Glitch Rings!
+    const monolith = new THREE.Mesh(new THREE.OctahedronGeometry(0.86, 0), matPrimary);
+    monolith.scale.set(1.0, 1.48, 0.92);
+    monolith.position.set(0, 1.42, 0);
+    monolith.castShadow = true;
+    bodyGroup.add(monolith);
 
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.1, 0.1), matAccent);
-    visor.position.set(0, 1.7, 0.3);
-    bodyGroup.add(visor);
+    const armorShell = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.62, 1.15, 6), matDark);
+    armorShell.position.set(0, 1.25, 0);
+    armorShell.castShadow = true;
+    bodyGroup.add(armorShell);
 
-    const bossHalo = new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.055, 8, 24), matAccent);
-    bossHalo.rotation.x = Math.PI / 2;
-    bossHalo.position.set(0, 2.08, 0);
-    bodyGroup.add(bossHalo);
-    crownOrWings = bossHalo;
+    // Swept Crimson Wing Blades
+    for (const sx of [-1, 1]) {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.75, 1.22, 0.22), matDark);
+      blade.position.set(sx * 1.15, 1.5, -0.15);
+      blade.rotation.z = sx * -0.28;
+      blade.castShadow = true;
+      const glow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.1, 0.26), matAccent);
+      glow.position.set(sx * 1.46, 1.56, -0.15);
+      glow.rotation.z = sx * -0.28;
+      bodyGroup.add(blade, glow);
+    }
 
-    hpBarY = 2.55;
+    // Glowing Rootkit Optic Eye
+    const eye = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), matAccent);
+    eye.position.set(0, 1.48, 0.72);
+    bodyGroup.add(eye);
+
+    // Counter-rotating Outer & Inner Firewall Glitch Rings
+    const outerRing = new THREE.Mesh(new THREE.TorusGeometry(1.38, 0.065, 8, 28), matAccent);
+    outerRing.rotation.x = Math.PI / 2.6;
+    outerRing.position.set(0, 1.55, 0);
+    bodyGroup.add(outerRing);
+    crownOrWings = outerRing;
+
+    const innerRing = new THREE.Mesh(new THREE.TorusGeometry(1.06, 0.055, 8, 6), matDark);
+    innerRing.rotation.x = -Math.PI / 3;
+    innerRing.position.set(0, 1.55, 0);
+    bodyGroup.add(innerRing);
+    secondaryRing = innerRing;
+
+    hpBarY = 3.05;
   }
 
-  // Translucent Blinn-Phong Ice Crystal shell shown when enemy is slowed by Freeze Tower
+  // Translucent Blinn-Phong Ice Crystal shell shown when slowed/frozen
   const frozenMat = createBlinnPhongCrystalMaterial({
     baseColor: 0x7dd3fc,
     rimColor: 0xe0f2fe,
     shininess: 80,
-    specularStrength: 1.8,
-    opacity: 0.48,
+    specularStrength: 1.7,
+    opacity: 0.46,
     transparent: true,
   });
-  const frozenRadius = preset.isBoss ? 1.15 : type === 'orc' ? 0.72 : 0.52;
+  const frozenRadius = preset.isFinalBoss ? 1.45 : preset.isBoss ? 1.1 : type === 'trojan_brute' ? 0.74 : 0.5;
   const frozenOverlay = new THREE.Mesh(new THREE.OctahedronGeometry(frozenRadius, 0), frozenMat);
-  frozenOverlay.position.y = preset.isFlying ? 0.9 : frozenRadius * 0.95;
+  frozenOverlay.position.y = preset.isFlying ? 0.88 : frozenRadius * 0.92;
   frozenOverlay.visible = false;
   root.add(frozenOverlay);
 
-  // Clean overhead 3D Health Bar (billboarded toward camera each frame)
-  const barW = preset.isBoss ? 1.6 : 0.85;
-  const barH = preset.isBoss ? 0.13 : 0.09;
+  // Clean overhead 3D Health Bar
+  const barW = preset.isFinalBoss ? 2.2 : preset.isBoss ? 1.65 : 0.86;
+  const barH = preset.isFinalBoss ? 0.16 : preset.isBoss ? 0.13 : 0.09;
   const hpBarBg = new THREE.Mesh(
     new THREE.PlaneGeometry(barW + 0.06, barH + 0.05),
     new THREE.MeshBasicMaterial({ color: 0x050b18, side: THREE.DoubleSide })
@@ -584,11 +696,11 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
   root.add(hpBarBg);
 
   const fillGeo = new THREE.PlaneGeometry(barW, barH);
-  fillGeo.translate(barW * 0.5, 0, 0); // anchor left edge so scale.x shrinks cleanly!
+  fillGeo.translate(barW * 0.5, 0, 0);
   const hpBarFill = new THREE.Mesh(
     fillGeo,
     new THREE.MeshBasicMaterial({
-      color: preset.isBoss ? 0xff1e42 : 0x22c55e,
+      color: preset.isFinalBoss ? 0xff1744 : preset.isBoss ? 0xf59e0b : 0x22c55e,
       side: THREE.DoubleSide,
     })
   );
@@ -604,5 +716,6 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     flashMaterials,
     shadowDisc,
     crownOrWings,
+    secondaryRing,
   };
 }

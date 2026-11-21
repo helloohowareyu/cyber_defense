@@ -59,6 +59,27 @@ export function TowerSilhouetteIcon({
       </svg>
     );
   }
+  if (type === 'tesla') {
+    return (
+      <svg viewBox="0 0 28 28" fill="none" className={className} aria-hidden="true">
+        <path d="M8 23h12l-2-4H10l-2 4z" fill="#1d1138" stroke="#c084fc" strokeWidth="1.4" />
+        <line x1="14" y1="9" x2="14" y2="19" stroke="#a855f7" strokeWidth="2.4" />
+        <ellipse cx="14" cy="13.5" rx="5.5" ry="1.6" stroke="#d8b4fe" strokeWidth="1.3" />
+        <circle cx="14" cy="7" r="3" fill="#c084fc" stroke="#f3e8ff" strokeWidth="1.2" />
+        <path d="M5 9l4-2M23 9l-4-2" stroke="#e9d5ff" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (type === 'farm') {
+    return (
+      <svg viewBox="0 0 28 28" fill="none" className={className} aria-hidden="true">
+        <rect x="6" y="17" width="16" height="6" rx="1" fill="#0b2820" stroke="#34d399" strokeWidth="1.4" />
+        <rect x="9" y="10" width="10" height="7" rx="1" fill="#064e3b" stroke="#34d399" strokeWidth="1.3" />
+        <polygon points="14,3 18.5,7 14,11 9.5,7" fill="#fbbf24" stroke="#fef3c7" strokeWidth="1.1" />
+        <line x1="9" y1="20" x2="19" y2="20" stroke="#6ee7b7" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 28 28" fill="none" className={className} aria-hidden="true">
       <path d="M7 23h14l-1.5-5h-11L7 23z" fill="#26101c" stroke="#f43f5e" strokeWidth="1.4" />

@@ -23,14 +23,17 @@ const INITIAL_HUD: HudSnapshot = {
   maxCoreHp: STARTING_CORE_HP,
   wave: 0,
   totalWaves: TOTAL_WAVES,
+  stageLabel: 'Stage 1 · Perimeter Scan',
   waveActive: false,
+  autoStartWave: false,
   enemiesRemaining: 0,
   enemiesDefeated: 0,
   score: 0,
   timeScale: 1,
   activeBuildType: 'laser',
-  selectedSlotId: null,
+  selectedTowerId: null,
   selectedTower: null,
+  abilities: [],
   bossStatus: null,
   bannerMessage: null,
   graphics: {
@@ -52,7 +55,7 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [saveData, setSaveData] = useState<SaveData>(() => {
     const loaded = loadSaveData();
-    audioSynth.configure(loaded.volume, loaded.muted);
+    audioSynth.configure(loaded.volume, loaded.muted, loaded.musicMuted);
     return loaded;
   });
   const [dockCollapsed, setDockCollapsed] = useState(false);
@@ -61,6 +64,9 @@ export default function App() {
 
   const saveRef = useRef(saveData);
   saveRef.current = saveData;
+
+  const hudRef = useRef(hud);
+  hudRef.current = hud;
 
   const handleHudUpdate = useCallback((snapshot: HudSnapshot) => {
     setHud(snapshot);
@@ -72,10 +78,10 @@ export default function App() {
   }, []);
 
   const handleFloatText = useCallback((evt: FloatingTextEvent) => {
-    setFloatTexts((prev) => [...prev.slice(-14), evt]);
+    setFloatTexts((prev) => [...prev.slice(-16), evt]);
     window.setTimeout(() => {
       setFloatTexts((prev) => prev.filter((item) => item.id !== evt.id));
-    }, 780);
+    }, 820);
   }, []);
 
   const handleMatchEnd = useCallback(
@@ -103,7 +109,6 @@ export default function App() {
     });
     engineRef.current = engine;
 
-    // Support ?autostart=1 query param for fast testing & direct launch
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1') {
       document.body.dataset.state = 'playing';
@@ -116,9 +121,9 @@ export default function App() {
     };
   }, [handleHudUpdate, handleFloatText, handleMatchEnd]);
 
-  const handleUpdateAudio = useCallback((volume: number, muted: boolean) => {
-    audioSynth.configure(volume, muted);
-    const next: SaveData = { ...saveRef.current, volume, muted };
+  const handleUpdateAudio = useCallback((volume: number, muted: boolean, musicMuted: boolean) => {
+    audioSynth.configure(volume, muted, musicMuted);
+    const next: SaveData = { ...saveRef.current, volume, muted, musicMuted };
     persistSaveData(next);
     setSaveData(next);
   }, []);
@@ -132,11 +137,12 @@ export default function App() {
     engineRef.current?.startNewGame();
   }, []);
 
-  // Global keyboard shortcuts (Title Enter/Space, Pause Esc/P, Graphics Lab G, Hide Dock H, Mute M)
+  // Global keyboard shortcuts (Title Enter/Space, Pause P/Esc, Graphics Lab G, Hide Dock H, SFX M, Music N)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      const phase = hud.phase;
+      const snap = hudRef.current;
+      const phase = snap.phase;
 
       if (phase === 'title' && (key === 'enter' || key === ' ')) {
         e.preventDefault();
@@ -144,10 +150,28 @@ export default function App() {
         return;
       }
 
-      if (key === 'escape' || key === 'p') {
+      if (key === 'p') {
         if (phase === 'playing') {
           e.preventDefault();
           engineRef.current?.setPaused(true);
+        } else if (phase === 'paused') {
+          e.preventDefault();
+          engineRef.current?.setPaused(false);
+        }
+        return;
+      }
+
+      if (key === 'escape') {
+        if (phase === 'playing') {
+          e.preventDefault();
+          // First cancel active build ghost or selected tower; second Escape pauses the game
+          if (snap.activeBuildType !== null) {
+            engineRef.current?.setActiveBuildType(null);
+          } else if (snap.selectedTowerId !== null) {
+            engineRef.current?.selectTower(null);
+          } else {
+            engineRef.current?.setPaused(true);
+          }
         } else if (phase === 'paused') {
           e.preventDefault();
           engineRef.current?.setPaused(false);
@@ -161,14 +185,16 @@ export default function App() {
         } else if (key === 'h') {
           setDockCollapsed((v) => !v);
         } else if (key === 'm') {
-          handleUpdateAudio(saveRef.current.volume, !saveRef.current.muted);
+          handleUpdateAudio(saveRef.current.volume, !saveRef.current.muted, saveRef.current.musicMuted);
+        } else if (key === 'n') {
+          handleUpdateAudio(saveRef.current.volume, saveRef.current.muted, !saveRef.current.musicMuted);
         }
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [hud.phase, handleStartGame, handleUpdateAudio]);
+  }, [handleStartGame, handleUpdateAudio]);
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#040914]">
@@ -179,13 +205,13 @@ export default function App() {
         className="fixed inset-0 w-full h-full z-0"
       />
 
-      {/* World-to-screen floating combat damage & gold indicators */}
+      {/* World-to-screen floating combat damage, gold farm packets & ultimate callouts */}
       {hud.phase === 'playing' && (
         <div className="fixed inset-0 z-10 pointer-events-none overflow-hidden">
           {floatTexts.map((ft) => (
             <div
               key={ft.id}
-              className="absolute font-mono-tabular text-xs font-bold hud-text-shadow transition-transform duration-500 -translate-x-1/2 -translate-y-full"
+              className="absolute font-mono-tabular text-xs font-bold hud-text-shadow transition-transform duration-500 -translate-x-1/2 -translate-y-full whitespace-nowrap"
               style={{
                 left: `${ft.x}px`,
                 top: `${ft.y}px`,
@@ -212,11 +238,14 @@ export default function App() {
         <GameplayHud
           hud={hud}
           muted={saveData.muted}
+          musicMuted={saveData.musicMuted}
           dockCollapsed={dockCollapsed}
           graphicsLabOpen={graphicsLabOpen}
           onToggleDock={() => setDockCollapsed((v) => !v)}
           onToggleGraphicsLab={() => setGraphicsLabOpen((v) => !v)}
-          onToggleMute={() => handleUpdateAudio(saveData.volume, !saveData.muted)}
+          onToggleMute={() => handleUpdateAudio(saveData.volume, !saveData.muted, saveData.musicMuted)}
+          onToggleMusic={() => handleUpdateAudio(saveData.volume, saveData.muted, !saveData.musicMuted)}
+          onToggleAutoWave={() => engineRef.current?.setAutoStartWave(!hud.autoStartWave)}
           onPause={() => engineRef.current?.setPaused(true)}
           onSetSpeed={(scale) => engineRef.current?.setTimeScale(scale)}
           onStartWave={() => engineRef.current?.startNextWave()}
@@ -224,7 +253,8 @@ export default function App() {
           onUpgradeTower={() => engineRef.current?.upgradeSelectedTower()}
           onSellTower={() => engineRef.current?.sellSelectedTower()}
           onSetTargeting={(m) => engineRef.current?.setSelectedTowerTargeting(m)}
-          onDeselectTower={() => engineRef.current?.selectSlot(null)}
+          onTriggerUltimate={(id) => engineRef.current?.triggerTowerUltimate(id)}
+          onDeselectTower={() => engineRef.current?.selectTower(null)}
         />
       )}
 
