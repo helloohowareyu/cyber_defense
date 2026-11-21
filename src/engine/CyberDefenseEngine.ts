@@ -217,6 +217,8 @@ interface EnemyEntity {
   pathProgress: number;
   slowTimer: number;
   slowRatio: number;
+  frostAge: number;
+  frostMistTimer: number;
   stunTimer: number;
   hitFlashTimer: number;
   position: THREE.Vector3;
@@ -325,6 +327,7 @@ export class CyberDefenseEngine {
   private shockwaves: ShockwaveVfx[] = [];
   private beamTrails: BeamTrailVfx[] = [];
   private flashes: FlashVfx[] = [];
+  private readonly _iceTint = new THREE.Color(0x9fd8ff);
   private glowTex: THREE.Texture;
 
   // Selective bloom: only objects on BLOOM_LAYER (neon parts, beams, flashes, particles) glow;
@@ -1013,7 +1016,7 @@ export class CyberDefenseEngine {
     this.previewRingMesh.visible = false;
     this.ghostFootprintMesh.visible = false;
     this.keysPressed.clear();
-    audioSynth.setMusicMood('idle');
+    audioSynth.setMusicMood('menu');
     this.emitHudSnapshot();
   }
 
@@ -1498,6 +1501,14 @@ export class CyberDefenseEngine {
   // =========================================================================
 
   private syncMusicMood(): void {
+    if (this.phase === 'title') {
+      audioSynth.setMusicMood('menu');
+      return;
+    }
+    if (this.phase === 'victory' || this.phase === 'gameover') {
+      audioSynth.setMusicMood('off');
+      return;
+    }
     if (this.phase !== 'playing') {
       audioSynth.setMusicMood('idle');
       return;
@@ -1672,6 +1683,8 @@ export class CyberDefenseEngine {
       pathProgress: 0,
       slowTimer: 0,
       slowRatio: 0,
+      frostAge: 0,
+      frostMistTimer: 0,
       stunTimer: 0,
       hitFlashTimer: 0,
       position: rig.root.position.clone(),
@@ -1776,6 +1789,45 @@ export class CyberDefenseEngine {
   private spawnEnergyBeam(from: THREE.Vector3, to: THREE.Vector3, colorHex: number, radius: number, duration: number): void {
     this.spawnBeamSegment(from, to, colorHex, radius, duration);
     this.spawnBeamSegment(from, to, 0xffffff, radius * 0.35, duration * 0.8);
+  }
+
+  // Ice grows out of the ground around a slowed enemy, shimmers, and drifts a little frost mist
+  private updateFrost(e: EnemyEntity, realDt: number): void {
+    const overlay = e.rig.frozenOverlay;
+    if (!overlay.visible) {
+      overlay.visible = true;
+      e.frostAge = 0;
+      e.frostMistTimer = 0;
+    }
+    e.frostAge += realDt;
+    const grow = Math.min(1, e.frostAge / 0.22);
+    const eased = 1 - Math.pow(1 - grow, 3);
+    overlay.scale.set(0.6 + 0.4 * eased, Math.max(0.02, eased), 0.6 + 0.4 * eased);
+    e.rig.frozenMaterial.uniforms.uTime.value = this.elapsed;
+    this.setFrostTint(e, 0.55 * eased);
+
+    e.frostMistTimer -= realDt;
+    if (e.frostMistTimer <= 0) {
+      e.frostMistTimer = 0.28;
+      this.spawnParticles(e.position, 2, 0xd6f2ff, 0.7, 0.5);
+    }
+  }
+
+  // Slow wears off: the ice bursts into shards and the body returns to its own colours
+  private shatterFrost(e: EnemyEntity): void {
+    if (!e.rig.frozenOverlay.visible) return;
+    e.rig.frozenOverlay.visible = false;
+    this.setFrostTint(e, 0);
+    const center = e.position.clone().add(new THREE.Vector3(0, e.isFlying ? 1.25 : 0.6, 0));
+    this.spawnParticles(e.position, e.isBoss ? 22 : 12, 0xbfe9ff, 3.0, 0.42);
+    this.spawnFlash(center, 0x9fdcff, e.isBoss ? 1.6 : 0.9, 0.2);
+  }
+
+  private setFrostTint(e: EnemyEntity, amount: number): void {
+    const { tintMaterials, tintBaseColors } = e.rig;
+    for (let i = 0; i < tintMaterials.length; i++) {
+      tintMaterials[i].color.copy(tintBaseColors[i]).lerp(this._iceTint, amount);
+    }
   }
 
   private spawnFlash(pos: THREE.Vector3, colorHex: number, size: number, duration: number, endScale = 1.7): void {
@@ -2063,7 +2115,7 @@ export class CyberDefenseEngine {
           const won = this.pendingOutcome === 'victory';
           this.phase = won ? 'victory' : 'gameover';
           this.pendingOutcome = null;
-          audioSynth.setMusicMood('idle');
+          audioSynth.setMusicMood('off');
           if (won) audioSynth.playVictory();
           else audioSynth.playGameOver();
           this.onMatchEnd({
@@ -2212,11 +2264,10 @@ export class CyberDefenseEngine {
 
       if (e.slowTimer > 0) {
         e.slowTimer -= simDt;
-        e.rig.frozenOverlay.visible = true;
-        e.rig.frozenOverlay.rotation.y += realDt * 1.4;
+        this.updateFrost(e, realDt);
         if (e.slowTimer <= 0) {
           e.slowRatio = 0;
-          e.rig.frozenOverlay.visible = false;
+          this.shatterFrost(e);
         }
       }
 

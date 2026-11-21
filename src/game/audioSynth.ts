@@ -1,9 +1,29 @@
-// 100% Offline Procedural Web Audio API Sound Engine:
-// - Adaptive Cyber-Synthwave Background Music Sequencer (Ambient Prep / Active Wave / Boss Intensity)
-// - Tactical SFX for all 6 Towers, Data Farm packets, Ultimates, Kills, Waves, and Victory/Defeat.
-// Zero external audio files or internet required.
+// Audio game:
+// - Musik latar dari file lagu: "Calculated Ascent" di menu utama, "Override Pulse" saat bermain.
+//   Di sela wave lagu wave tetap jalan tapi lebih pelan, lalu naik penuh begitu wave dimulai.
+// - SFX prosedural (Web Audio API) untuk menara, farm, ultimate, kill, wave, menang/kalah.
 
-export type MusicMood = 'idle' | 'combat' | 'boss';
+import menuTrackUrl from '../audio/calculated-ascent.mp3';
+import waveTrackUrl from '../audio/override-pulse.mp3';
+
+// menu: layar judul, idle: di arena tapi wave belum jalan, combat/boss: wave berjalan, off: hening
+export type MusicMood = 'menu' | 'idle' | 'combat' | 'boss' | 'off';
+
+type TrackId = 'menu' | 'wave';
+
+// Seberapa keras tiap lagu untuk setiap mood (0..1, dikali volume master)
+const MOOD_MIX: Record<MusicMood, Record<TrackId, number>> = {
+  menu: { menu: 1, wave: 0 },
+  idle: { menu: 0, wave: 0.4 },
+  combat: { menu: 0, wave: 1 },
+  boss: { menu: 0, wave: 1 },
+  off: { menu: 0, wave: 0 },
+};
+
+const MUSIC_LEVEL = 0.55;
+const FADE_STEP_MS = 50;
+// Lama crossfade antar lagu (detik), dihitung dari waktu nyata supaya tetap pas walau frame drop
+const FADE_SECONDS = 1.2;
 
 // MIDI note to Hz helper
 function midiToHz(midi: number): number {
@@ -13,18 +33,19 @@ function midiToHz(midi: number): number {
 class CyberAudioSynth {
   private ctx: AudioContext | null = null;
   private sfxGain: GainNode | null = null;
-  private musicGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
 
   private volume = 0.7;
   private sfxMuted = false;
   private musicMuted = false;
 
-  // Sequencer state
-  private musicTimer: number | null = null;
+  // Pemutar lagu
+  private tracks: Record<TrackId, HTMLAudioElement> | null = null;
+  private trackLevel: Record<TrackId, number> = { menu: 0, wave: 0 };
+  private musicMood: MusicMood = 'menu';
   private musicRunning = false;
-  private musicStep = 0;
-  private musicMood: MusicMood = 'idle';
+  private fadeTimer: number | null = null;
+  private unlockArmed = false;
 
   // Rate limiters to prevent audio clipping during dense swarms
   private lastLaserAt = 0;
@@ -46,10 +67,6 @@ class CyberAudioSynth {
       this.sfxGain.gain.value = this.sfxMuted ? 0 : this.volume;
       this.sfxGain.connect(this.ctx.destination);
 
-      this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = this.musicMuted ? 0 : this.volume * 0.32;
-      this.musicGain.connect(this.ctx.destination);
-
       // Generate short white-noise buffer once for hi-hat / explosion transients
       const sr = this.ctx.sampleRate;
       const len = Math.floor(sr * 0.12);
@@ -70,162 +87,137 @@ class CyberAudioSynth {
     this.volume = Math.max(0, Math.min(1, volume));
     this.sfxMuted = sfxMuted;
     this.musicMuted = musicMuted;
-    if (this.ctx) {
-      if (this.sfxGain) {
-        this.sfxGain.gain.setTargetAtTime(this.sfxMuted ? 0 : this.volume, this.ctx.currentTime, 0.03);
-      }
-      if (this.musicGain) {
-        this.musicGain.gain.setTargetAtTime(
-          this.musicMuted ? 0 : this.volume * 0.32,
-          this.ctx.currentTime,
-          0.05
-        );
-      }
+    if (this.ctx && this.sfxGain) {
+      this.sfxGain.gain.setTargetAtTime(this.sfxMuted ? 0 : this.volume, this.ctx.currentTime, 0.03);
+    }
+    this.applyTrackVolumes();
+    if (this.musicRunning) {
+      this.syncTrackPlayback();
+      this.startFade();
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Musik latar
+  // ---------------------------------------------------------------------------
+
+  private ensureTracks(): Record<TrackId, HTMLAudioElement> | null {
+    if (typeof window === 'undefined' || typeof Audio === 'undefined') return null;
+    if (!this.tracks) {
+      const make = (src: string) => {
+        const el = new Audio(src);
+        el.loop = true;
+        el.preload = 'auto';
+        el.volume = 0;
+        return el;
+      };
+      this.tracks = { menu: make(menuTrackUrl), wave: make(waveTrackUrl) };
+    }
+    return this.tracks;
+  }
+
   public setMusicMood(mood: MusicMood): void {
+    if (this.musicMood === mood) return;
+    // Lagu wave mulai dari awal setiap kali masuk arena dari menu
+    if (this.musicMood === 'menu' && mood !== 'menu' && this.tracks) {
+      this.tracks.wave.currentTime = 0;
+    }
+    if (mood === 'menu' && this.musicMood !== 'menu' && this.tracks) {
+      this.tracks.menu.currentTime = 0;
+    }
     this.musicMood = mood;
+    if (this.musicRunning) {
+      this.syncTrackPlayback();
+      this.startFade();
+    }
   }
 
   public startMusic(): void {
-    const ctx = this.ensureContext();
-    if (!ctx || this.musicRunning) return;
+    this.ensureContext();
+    if (!this.ensureTracks()) return;
     this.musicRunning = true;
-    this.scheduleStep();
+    this.syncTrackPlayback();
+    this.startFade();
   }
 
   public stopMusic(): void {
     this.musicRunning = false;
-    if (this.musicTimer !== null) {
-      window.clearTimeout(this.musicTimer);
-      this.musicTimer = null;
+    if (this.fadeTimer !== null) {
+      window.clearInterval(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+    if (this.tracks) {
+      this.tracks.menu.pause();
+      this.tracks.wave.pause();
     }
   }
 
-  private scheduleStep(): void {
-    if (!this.musicRunning) return;
-    const stepMs = this.musicMood === 'boss' ? 115 : this.musicMood === 'combat' ? 128 : 155;
-    if (!this.musicMuted && this.ctx && this.ctx.state === 'running' && this.musicGain) {
-      this.playMusicStep(this.ctx, this.musicStep, stepMs / 1000);
-    }
-    this.musicStep = (this.musicStep + 1) % 32;
-    this.musicTimer = window.setTimeout(() => this.scheduleStep(), stepMs);
+  private targetLevel(id: TrackId): number {
+    return this.musicMuted ? 0 : MOOD_MIX[this.musicMood][id];
   }
 
-  private playMusicStep(ctx: AudioContext, step: number, stepSec: number): void {
-    if (!this.musicGain) return;
-    const t = ctx.currentTime + 0.01;
-    const bar = Math.floor(step / 8); // 4 bars of 8 eighth-notes (32 steps)
-    const beatInBar = step % 8;
-
-    // Dark Cyber-Synthwave chord roots: Am -> F -> C -> G (boss shifts to tense Am -> Bb -> Gm -> E)
-    const bassRoots =
-      this.musicMood === 'boss' ? [33, 34, 31, 28] : [33, 29, 36, 31];
-    const arpChords =
-      this.musicMood === 'boss'
-        ? [
-            [57, 60, 64, 69], // Am
-            [58, 62, 65, 70], // Bb
-            [55, 58, 62, 67], // Gm
-            [52, 56, 59, 64], // E
-          ]
-        : [
-            [57, 60, 64, 67], // Am7
-            [53, 57, 60, 64], // Fmaj7
-            [55, 60, 64, 67], // C
-            [55, 59, 62, 67], // G
-          ];
-
-    const rootMidi = bassRoots[bar];
-    const chord = arpChords[bar];
-
-    // 1. Driving Filtered Synth Bass (plays every even step in idle, pumping 8ths in combat/boss)
-    if (this.musicMood !== 'idle' || beatInBar % 2 === 0) {
-      const bassOsc = ctx.createOscillator();
-      const filter = ctx.createBiquadFilter();
-      const g = ctx.createGain();
-      bassOsc.type = 'sawtooth';
-      const octaveJump = beatInBar === 6 || beatInBar === 7 ? 12 : 0;
-      bassOsc.frequency.setValueAtTime(midiToHz(rootMidi + octaveJump), t);
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(this.musicMood === 'boss' ? 760 : 520, t);
-      filter.frequency.exponentialRampToValueAtTime(170, t + stepSec * 0.9);
-      const bassVol = this.musicMood === 'idle' ? 0.16 : 0.24;
-      g.gain.setValueAtTime(bassVol, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + stepSec * 0.92);
-      bassOsc.connect(filter);
-      filter.connect(g);
-      g.connect(this.musicGain);
-      bassOsc.start(t);
-      bassOsc.stop(t + stepSec * 0.95);
-    }
-
-    // 2. Shimmering Cyber Arpeggio Synth
-    const arpPattern = [0, 1, 2, 3, 2, 1, 3, 2];
-    const playArp = this.musicMood !== 'idle' || beatInBar % 2 === 0;
-    if (playArp) {
-      const noteMidi = chord[arpPattern[beatInBar]] + (this.musicMood === 'boss' && step % 4 === 0 ? 12 : 0);
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = this.musicMood === 'boss' ? 'square' : 'triangle';
-      osc.frequency.setValueAtTime(midiToHz(noteMidi), t);
-      const vol = this.musicMood === 'boss' ? 0.085 : 0.1;
-      g.gain.setValueAtTime(vol, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + stepSec * 0.85);
-      osc.connect(g);
-      g.connect(this.musicGain);
-      osc.start(t);
-      osc.stop(t + stepSec * 0.9);
-    }
-
-    // 3. Soft Atmospheric Pad Swell on bar start
-    if (beatInBar === 0) {
-      const padOsc = ctx.createOscillator();
-      const g = ctx.createGain();
-      padOsc.type = 'sine';
-      padOsc.frequency.setValueAtTime(midiToHz(chord[0] - 12), t);
-      g.gain.setValueAtTime(0.001, t);
-      g.gain.linearRampToValueAtTime(0.11, t + stepSec * 1.5);
-      g.gain.exponentialRampToValueAtTime(0.001, t + stepSec * 7.6);
-      padOsc.connect(g);
-      g.connect(this.musicGain);
-      padOsc.start(t);
-      padOsc.stop(t + stepSec * 7.8);
-    }
-
-    // 4. Electronic Pulse Kick & Hi-Hat (active during combat & boss waves!)
-    if (this.musicMood !== 'idle') {
-      if (beatInBar === 0 || beatInBar === 4 || (this.musicMood === 'boss' && beatInBar === 6)) {
-        const kick = ctx.createOscillator();
-        const kg = ctx.createGain();
-        kick.type = 'sine';
-        kick.frequency.setValueAtTime(118, t);
-        kick.frequency.exponentialRampToValueAtTime(38, t + 0.11);
-        kg.gain.setValueAtTime(0.26, t);
-        kg.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
-        kick.connect(kg);
-        kg.connect(this.musicGain);
-        kick.start(t);
-        kick.stop(t + 0.14);
+  // Putar lagu yang perlu terdengar; browser menolak autoplay sebelum ada klik/tombol,
+  // jadi kalau ditolak kita coba lagi pada interaksi pertama.
+  private syncTrackPlayback(): void {
+    const tracks = this.tracks;
+    if (!tracks) return;
+    (Object.keys(tracks) as TrackId[]).forEach((id) => {
+      const el = tracks[id];
+      const wanted = this.targetLevel(id) > 0 || this.trackLevel[id] > 0.001;
+      if (wanted && el.paused) {
+        el.play().catch(() => this.armUnlock());
       }
+    });
+  }
 
-      if (this.noiseBuffer && beatInBar % 2 === 1) {
-        const src = ctx.createBufferSource();
-        src.buffer = this.noiseBuffer;
-        const hp = ctx.createBiquadFilter();
-        hp.type = 'highpass';
-        hp.frequency.value = 6500;
-        const hg = ctx.createGain();
-        hg.gain.setValueAtTime(0.075, t);
-        hg.gain.exponentialRampToValueAtTime(0.001, t + 0.055);
-        src.connect(hp);
-        hp.connect(hg);
-        hg.connect(this.musicGain);
-        src.start(t);
-        src.stop(t + 0.06);
+  private armUnlock(): void {
+    if (this.unlockArmed || typeof window === 'undefined') return;
+    this.unlockArmed = true;
+    const retry = () => {
+      window.removeEventListener('pointerdown', retry, true);
+      window.removeEventListener('keydown', retry, true);
+      this.unlockArmed = false;
+      if (this.musicRunning) this.startMusic();
+    };
+    window.addEventListener('pointerdown', retry, true);
+    window.addEventListener('keydown', retry, true);
+  }
+
+  private applyTrackVolumes(): void {
+    if (!this.tracks) return;
+    (Object.keys(this.tracks) as TrackId[]).forEach((id) => {
+      this.tracks![id].volume = Math.max(0, Math.min(1, this.trackLevel[id] * this.volume * MUSIC_LEVEL));
+    });
+  }
+
+  private startFade(): void {
+    if (this.fadeTimer !== null || typeof window === 'undefined') return;
+    let last = performance.now();
+    this.fadeTimer = window.setInterval(() => {
+      const now = performance.now();
+      const maxStep = Math.min(1, (now - last) / 1000 / FADE_SECONDS);
+      last = now;
+      let settled = true;
+      (['menu', 'wave'] as TrackId[]).forEach((id) => {
+        const target = this.targetLevel(id);
+        const cur = this.trackLevel[id];
+        if (Math.abs(target - cur) > 0.001) {
+          settled = false;
+          this.trackLevel[id] = cur + Math.sign(target - cur) * Math.min(maxStep, Math.abs(target - cur));
+        }
+      });
+      this.applyTrackVolumes();
+      if (settled) {
+        if (this.fadeTimer !== null) window.clearInterval(this.fadeTimer);
+        this.fadeTimer = null;
+        // Hentikan lagu yang sudah benar-benar senyap supaya tidak makan CPU
+        if (this.tracks) {
+          (['menu', 'wave'] as TrackId[]).forEach((id) => {
+            if (this.trackLevel[id] <= 0.001 && !this.tracks![id].paused) this.tracks![id].pause();
+          });
+        }
       }
-    }
+    }, FADE_STEP_MS);
   }
 
   private pitchJitter(base: number, pct = 0.08): number {

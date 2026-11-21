@@ -37,20 +37,20 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
   return (
     <aside
       aria-label="Lab Grafika Komputer CIF65116"
-      className={`fixed top-16 z-30 pointer-events-auto cyber-panel rounded-2xl w-[290px] p-4 text-xs transition-all ${
+      className={`fixed top-16 z-30 pointer-events-auto cyber-panel rounded-[4px] w-[290px] text-silk p-4 text-xs transition-all ${
         shopOpen ? 'right-[330px]' : 'right-12'
       }`}
     >
-      <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
+      <div className="flex items-center justify-between pb-2.5 border-b border-black/40">
         <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-cyan-400" />
-          <h2 className="font-display font-bold text-sm text-white">Lab Grafika (CIF65116)</h2>
+          <Layers className="w-4 h-4 text-led" />
+          <h2 className="font-display font-bold text-sm text-silk">Lab Grafika (CIF65116)</h2>
         </div>
         <button
           type="button"
           aria-label="Tutup Lab Grafika"
           onClick={onClose}
-          className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+          className="p-1 rounded text-silk-dim hover:text-silk hover:bg-white/5 cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -59,27 +59,19 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
       <div className="mt-3 space-y-3.5">
         {/* Bahan Kajian 5: Projection Matrix */}
         <div>
-          <div className="text-slate-400 mb-1.5">Proyeksi Kamera (Bahan Kajian 5)</div>
-          <div className="grid grid-cols-2 gap-1 bg-slate-900 p-1 rounded border border-slate-800">
+          <div className="text-silk-dim mb-1.5">Proyeksi Kamera (Bahan Kajian 5)</div>
+          <div className="grid grid-cols-2 gap-1">
             <button
               type="button"
               onClick={() => onSetProjection('perspective')}
-              className={`py-1.5 rounded font-medium cursor-pointer transition-colors ${
-                graphics.projection === 'perspective'
-                  ? 'bg-cyan-400 text-slate-950 font-semibold'
-                  : 'text-slate-300 hover:text-white'
-              }`}
+              className={`key py-1.5 font-semibold ${graphics.projection === 'perspective' ? 'key-on' : ''}`}
             >
               Perspective
             </button>
             <button
               type="button"
               onClick={() => onSetProjection('orthographic')}
-              className={`py-1.5 rounded font-medium cursor-pointer transition-colors ${
-                graphics.projection === 'orthographic'
-                  ? 'bg-cyan-400 text-slate-950 font-semibold'
-                  : 'text-slate-300 hover:text-white'
-              }`}
+              className={`key py-1.5 font-semibold ${graphics.projection === 'orthographic' ? 'key-on' : ''}`}
             >
               Orthographic
             </button>
@@ -88,7 +80,7 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
 
         {/* Camera Presets */}
         <div>
-          <div className="flex items-center gap-1.5 text-slate-400 mb-1.5">
+          <div className="flex items-center gap-1.5 text-silk-dim mb-1.5">
             <Camera className="w-3.5 h-3.5" />
             <span>Sudut Pandang Kamera</span>
           </div>
@@ -98,11 +90,7 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
                 key={p.id}
                 type="button"
                 onClick={() => onSetCameraPreset(p.id)}
-                className={`py-1.5 rounded border text-center cursor-pointer transition-colors ${
-                  graphics.cameraPreset === p.id
-                    ? 'bg-sky-900/90 border-cyan-400 text-white font-semibold'
-                    : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-600'
-                }`}
+                className={`key py-1.5 text-center font-semibold ${graphics.cameraPreset === p.id ? 'key-on' : ''}`}
               >
                 {p.label}
               </button>
@@ -111,53 +99,53 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
         </div>
 
         {/* Pipeline Feature Toggles */}
-        <div className="space-y-2 pt-2 border-t border-slate-800">
+        <div className="space-y-2 pt-2 border-t border-black/40">
           <label className="flex items-center justify-between cursor-pointer">
-            <span className="text-slate-200">Wireframe Primitives (VBO)</span>
+            <span className="text-silk">Wireframe Primitives (VBO)</span>
             <input
               type="checkbox"
               checked={graphics.wireframe}
               onChange={(e) => onSetWireframe(e.target.checked)}
-              className="accent-cyan-400 w-4 h-4 cursor-pointer"
+              className="accent-[#ffb23f] w-4 h-4 cursor-pointer"
             />
           </label>
 
           <label className="flex items-center justify-between cursor-pointer">
-            <span className="text-slate-200">Shadow Mapping (PCFSoft)</span>
+            <span className="text-silk">Shadow Mapping (PCFSoft)</span>
             <input
               type="checkbox"
               checked={graphics.shadowsEnabled}
               onChange={(e) => onSetShadows(e.target.checked)}
-              className="accent-cyan-400 w-4 h-4 cursor-pointer"
+              className="accent-[#ffb23f] w-4 h-4 cursor-pointer"
             />
           </label>
 
           <label className="flex items-center justify-between cursor-pointer">
-            <span className="text-slate-200">Alpha Blending Range Rings</span>
+            <span className="text-silk">Alpha Blending Range Rings</span>
             <input
               type="checkbox"
               checked={graphics.showAllRangeRings}
               onChange={(e) => onSetShowAllRings(e.target.checked)}
-              className="accent-cyan-400 w-4 h-4 cursor-pointer"
+              className="accent-[#ffb23f] w-4 h-4 cursor-pointer"
             />
           </label>
         </div>
 
         {/* Live WebGL Pipeline Metrics */}
-        <div className="pt-2.5 border-t border-slate-800 space-y-1 text-[11px] font-mono-tabular text-slate-400">
+        <div className="pt-2.5 border-t border-black/40 space-y-1 text-[11px] font-mono-tabular text-silk-dim">
           <div className="flex justify-between">
             <span>Segitiga Dirender</span>
-            <span className="text-cyan-300">{graphics.triangles.toLocaleString()}</span>
+            <span className="text-led">{graphics.triangles.toLocaleString()}</span>
           </div>
           <div className="flex justify-between">
             <span>Draw Calls</span>
-            <span className="text-white">{graphics.drawCalls}</span>
+            <span className="text-silk">{graphics.drawCalls}</span>
           </div>
           <div className="flex justify-between">
             <span>Custom GLSL Shaders</span>
-            <span className="text-emerald-400">4 Aktif</span>
+            <span className="text-ok">4 Aktif</span>
           </div>
-          <div className="text-[10px] text-slate-500 pt-1 leading-relaxed">
+          <div className="text-[10px] text-silk-dim/70 pt-1 leading-relaxed">
             Blinn-Phong Fresnel · Scrolling UV Additive Laser · Barycentric Alpha Ring · Road Flow Shader
           </div>
         </div>

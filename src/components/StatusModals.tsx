@@ -1,10 +1,11 @@
-// Outcome & Pause Status Modals (Pause, Victory, Game Over) — Single focused card per state.
+// Modal status (jeda, menang, kalah) — satu pelat per kondisi, angka di readout 7-segmen.
 
 import React from 'react';
-import { Home, Play, RotateCcw, ShieldAlert, Trophy } from 'lucide-react';
+import { Home, Play, RotateCcw } from 'lucide-react';
 import { HudSnapshot } from '../engine/CyberDefenseEngine';
 import { DIFFICULTY_PRESETS } from '../game/constants';
 import { SaveData } from '../game/saveManager';
+import { Led, Screw, Seg } from './Hardware';
 
 interface StatusModalsProps {
   hud: HudSnapshot;
@@ -12,6 +13,17 @@ interface StatusModalsProps {
   onResume: () => void;
   onRestart: () => void;
   onMainMenu: () => void;
+}
+
+function PlateScrews() {
+  return (
+    <>
+      <Screw className="absolute top-2 left-2" angle={25} />
+      <Screw className="absolute top-2 right-2" angle={-30} />
+      <Screw className="absolute bottom-2 left-2" angle={60} />
+      <Screw className="absolute bottom-2 right-2" angle={10} />
+    </>
+  );
 }
 
 export const StatusModals: React.FC<StatusModalsProps> = ({
@@ -23,38 +35,63 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
 }) => {
   if (hud.phase === 'paused') {
     return (
-      <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/70 p-4">
-        <div className="cyber-panel rounded-lg max-w-sm w-full p-6 text-center">
-          <h2 className="font-display text-2xl font-bold text-white">Permainan Dijeda</h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Mode {DIFFICULTY_PRESETS[hud.difficulty].label} · {hud.stageLabel} · Wave {hud.wave}/{hud.totalWaves} · Gold {hud.gold}G
+      <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#05070b]/70 p-4">
+        <div className="plate relative rounded-[4px] max-w-sm w-full px-7 py-6">
+          <PlateScrews />
+          <div className="flex items-center gap-2 silk">
+            <Led tone="amber" blink />
+            <span>Simulasi berhenti sementara</span>
+          </div>
+          <h2 className="font-display text-2xl font-bold text-silk mt-2">Permainan dijeda</h2>
+
+          <div className="recess rounded-[3px] mt-4 px-3 py-2.5 grid grid-cols-3 gap-2">
+            <div>
+              <div className="silk">Wave</div>
+              <span className="inline-flex items-baseline gap-1 mt-1">
+                <Seg value={String(hud.wave).padStart(2, '0')} digits={2} className="text-[17px]" />
+                <span className="text-[11px] text-silk-dim font-semibold">/{hud.totalWaves}</span>
+              </span>
+            </div>
+            <div>
+              <div className="silk">Gold</div>
+              <Seg value={hud.gold} digits={5} className="text-[17px] mt-1" />
+            </div>
+            <div>
+              <div className="silk">Core</div>
+              <Seg value={hud.coreHp} digits={3} tone="ok" className="text-[17px] mt-1" />
+            </div>
+          </div>
+          <p className="text-[12px] text-silk-dim mt-2">
+            {hud.stageLabel}, mode {DIFFICULTY_PRESETS[hud.difficulty].label}
           </p>
 
-          <div className="mt-6 flex flex-col gap-2.5">
+          <div className="mt-5 flex flex-col gap-2.5">
             <button
               type="button"
               onClick={onResume}
-              className="cyber-cut flex items-center justify-center gap-2 py-3 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-display font-bold text-sm cursor-pointer"
+              className="key key-go flex items-center justify-center gap-2 py-3 font-extrabold text-[15px]"
             >
               <Play className="w-4 h-4 fill-current" />
               <span>Lanjutkan</span>
             </button>
-            <button
-              type="button"
-              onClick={onRestart}
-              className="flex items-center justify-center gap-2 py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-md text-slate-100 text-sm font-medium cursor-pointer"
-            >
-              <RotateCcw className="w-4 h-4 text-cyan-400" />
-              <span>Ulangi Match</span>
-            </button>
-            <button
-              type="button"
-              onClick={onMainMenu}
-              className="flex items-center justify-center gap-2 py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-md text-slate-300 text-sm font-medium cursor-pointer"
-            >
-              <Home className="w-4 h-4" />
-              <span>Menu Utama</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onRestart}
+                className="key flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold"
+              >
+                <RotateCcw className="w-4 h-4 text-led" />
+                <span>Ulangi dari awal</span>
+              </button>
+              <button
+                type="button"
+                onClick={onMainMenu}
+                className="key flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold"
+              >
+                <Home className="w-4 h-4" />
+                <span>Menu utama</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -63,72 +100,63 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
 
   if (hud.phase === 'victory' || hud.phase === 'gameover') {
     const isVictory = hud.phase === 'victory';
+    const bestScore = Math.max(saveData.highScore, hud.score);
+    const isNewRecord = hud.score > 0 && hud.score >= saveData.highScore;
+
     return (
-      <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/75 p-4">
-        <div
-          className={`${
-            isVictory ? 'cyber-panel' : 'cyber-panel-crimson'
-          } rounded-lg max-w-md w-full p-6 text-center`}
-        >
-          <div className="flex justify-center mb-3">
-            {isVictory ? (
-              <Trophy className="w-11 h-11 text-amber-300" />
-            ) : (
-              <ShieldAlert className="w-11 h-11 text-rose-400" />
-            )}
+      <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#05070b]/75 p-4">
+        <div className={`${isVictory ? 'plate' : 'cyber-panel-crimson'} relative rounded-[4px] max-w-md w-full px-7 py-6`}>
+          <PlateScrews />
+          <div className="flex items-center gap-2 silk">
+            <Led tone={isVictory ? 'ok' : 'fault'} blink={!isVictory} />
+            <span>{isVictory ? 'Semua wave selesai, core aman' : 'Energy core berhenti merespons'}</span>
           </div>
-          <h2 className="font-display text-3xl font-bold text-white">
-            {isVictory ? 'VICTORY' : 'SYSTEM BREACH'}
-          </h2>
-          <p className="text-sm text-slate-300 mt-1">
+          <h2 className="wordmark text-[40px] mt-2.5">{isVictory ? 'VICTORY' : 'SYSTEM BREACH'}</h2>
+          <p className="text-[13px] text-silk-dim mt-2 leading-relaxed">
             {isVictory
-              ? `Final Boss OMEGA-0 Rootkit dan seluruh ${hud.totalWaves} wave serangan siber berhasil ditumpas. Energy Core terlindungi!`
-              : 'Energy Core ditembus gelombang malware sebelum Final Stage selesai.'}
+              ? `OMEGA-0 Rootkit tumbang dan ${hud.totalWaves} wave berhasil ditahan.`
+              : `Malware menembus core di wave ${hud.wave}. Coba susun ulang menara di dekat tikungan jalur.`}
           </p>
 
-          <div className="mt-5 grid grid-cols-3 gap-2.5 text-left">
-            <div className="bg-slate-900/90 border border-slate-800 rounded p-3">
-              <div className="text-[11px] text-slate-400">Wave</div>
-              <div className="font-mono-tabular text-lg font-bold text-cyan-300 mt-0.5">
-                {hud.wave}/{hud.totalWaves}
-              </div>
+          <div className="recess rounded-[3px] mt-4 px-3.5 py-3 grid grid-cols-3 gap-2">
+            <div>
+              <div className="silk">Wave</div>
+              <span className="inline-flex items-baseline gap-1 mt-1">
+                <Seg value={String(hud.wave).padStart(2, '0')} digits={2} className="text-[18px]" />
+                <span className="text-[11px] text-silk-dim font-semibold">/{hud.totalWaves}</span>
+              </span>
             </div>
-            <div className="bg-slate-900/90 border border-slate-800 rounded p-3">
-              <div className="text-[11px] text-slate-400">Dibasmi</div>
-              <div className="font-mono-tabular text-lg font-bold text-white mt-0.5">
-                {hud.enemiesDefeated}
-              </div>
+            <div>
+              <div className="silk">Dibasmi</div>
+              <Seg value={hud.enemiesDefeated} digits={4} className="text-[18px] mt-1" />
             </div>
-            <div className="bg-slate-900/90 border border-slate-800 rounded p-3">
-              <div className="text-[11px] text-slate-400">Skor</div>
-              <div className="font-mono-tabular text-lg font-bold text-amber-300 mt-0.5">
-                {hud.score.toLocaleString()}
-              </div>
+            <div>
+              <div className="silk">Skor</div>
+              <Seg value={hud.score} digits={6} tone={isVictory ? 'ok' : 'amber'} className="text-[18px] mt-1" />
             </div>
           </div>
+          <p className="text-[12px] text-silk-dim mt-2">
+            {isNewRecord ? 'Rekor baru di perangkat ini.' : `Rekor terbaik ${bestScore.toLocaleString('id-ID')}.`} Mode{' '}
+            {DIFFICULTY_PRESETS[hud.difficulty].label}, sisa core {hud.coreHp} dari {hud.maxCoreHp}.
+          </p>
 
-          <div className="mt-2.5 text-xs font-mono-tabular text-slate-400">
-            Mode: {DIFFICULTY_PRESETS[hud.difficulty].label} · High Score: {Math.max(saveData.highScore, hud.score).toLocaleString()} · Core HP: {hud.coreHp}/
-            {hud.maxCoreHp}
-          </div>
-
-          <div className="mt-6 flex gap-2.5">
+          <div className="mt-5 grid grid-cols-2 gap-2.5">
             <button
               type="button"
               data-start="true"
               onClick={onRestart}
-              className="flex-1 cyber-cut flex items-center justify-center gap-2 py-3 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-display font-bold text-sm cursor-pointer"
+              className="key key-go flex items-center justify-center gap-2 py-3 font-extrabold text-[15px]"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>{isVictory ? 'Main Lagi' : 'Coba Lagi'}</span>
+              <span>{isVictory ? 'Main lagi' : 'Coba lagi'}</span>
             </button>
             <button
               type="button"
               onClick={onMainMenu}
-              className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-md text-slate-200 text-sm font-medium cursor-pointer"
+              className="key flex items-center justify-center gap-2 py-3 text-[14px] font-semibold"
             >
               <Home className="w-4 h-4" />
-              <span>Menu Utama</span>
+              <span>Menu utama</span>
             </button>
           </div>
         </div>

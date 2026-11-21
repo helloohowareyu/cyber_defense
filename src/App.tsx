@@ -123,6 +123,10 @@ export default function App() {
     });
     engineRef.current = engine;
 
+    // Lagu menu; kalau browser menahan autoplay, lagu mulai pada klik/tombol pertama
+    audioSynth.setMusicMood('menu');
+    audioSynth.startMusic();
+
     const params = new URLSearchParams(window.location.search);
     const diffParam = params.get('difficulty');
     const resolvedDiff: DifficultyId =

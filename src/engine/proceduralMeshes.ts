@@ -161,6 +161,47 @@ export function neonBoost(colorHex: number, targetLuminance: number, min: number
   return Math.min(max, Math.max(min, targetLuminance / Math.max(lum, 0.01)));
 }
 
+// Frost patch painted on the ground under a frozen enemy: pale radial frost with fine ice cracks.
+// Generated once and shared by every enemy.
+let frostTextureCache: THREE.Texture | null = null;
+function getFrostTexture(): THREE.Texture {
+  if (frostTextureCache) return frostTextureCache;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const c = size / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+  g.addColorStop(0, 'rgba(235,248,255,0.85)');
+  g.addColorStop(0.55, 'rgba(170,220,255,0.45)');
+  g.addColorStop(1, 'rgba(170,220,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  // Branching crack lines radiating from the centre (deterministic, no Math.random)
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.lineCap = 'round';
+  const branch = (x: number, y: number, angle: number, length: number, width: number, depth: number) => {
+    const ex = x + Math.cos(angle) * length;
+    const ey = y + Math.sin(angle) * length;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    if (depth > 0) {
+      branch(ex, ey, angle - 0.5, length * 0.62, width * 0.7, depth - 1);
+      branch(ex, ey, angle + 0.45, length * 0.55, width * 0.7, depth - 1);
+    }
+  };
+  for (let i = 0; i < 9; i++) {
+    branch(c, c, (i / 9) * Math.PI * 2 + Math.sin(i * 3.1) * 0.2, size * 0.2, 2.2, 3);
+  }
+  frostTextureCache = new THREE.CanvasTexture(canvas);
+  frostTextureCache.colorSpace = THREE.SRGBColorSpace;
+  return frostTextureCache;
+}
+
 // Soft round glow used by additive sprites (muzzle flashes, hit flares, trails)
 export function createGlowTexture(): THREE.Texture {
   const size = 64;
@@ -261,16 +302,16 @@ export function buildTowerRig(type: TowerType): TowerRig {
   const matAccent = new THREE.MeshStandardMaterial({
     color: preset.accentColor,
     emissive: preset.accentColor,
-    emissiveIntensity: neonBoost(preset.accentColor, 0.85, 1.5, 3.0),
+    emissiveIntensity: neonBoost(preset.accentColor, 0.55, 0.8, 1.25),
     metalness: 0.3,
     roughness: 0.22,
   });
-  // Base slits stay below the bloom cut-off (1.5) so six towers in a row don't turn into a haze;
-  // only the halo ring above the mount glows
+  // Menara sengaja tidak ikut bloom: nyala cukup dari emissive biasa,
+  // cahaya kuat disimpan untuk tembakan dan efek kena musuh
   const matBaseGlow = new THREE.MeshStandardMaterial({
     color: 0x22d3ee,
     emissive: 0x22d3ee,
-    emissiveIntensity: 1.3,
+    emissiveIntensity: 0.9,
     metalness: 0.2,
     roughness: 0.2,
   });
@@ -313,7 +354,7 @@ export function buildTowerRig(type: TowerType): TowerRig {
   // Floating halo ring above the mounting plate, held by thin light beams.
   // The Farm's wide server vault would swallow it, so the Farm goes without.
   if (type !== 'farm') {
-    const matHalo = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.55 });
+    const matHalo = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 0.85 });
     part(root, new THREE.TorusGeometry(0.46, 0.012, 8, 40), matHalo, 0, 0.66, 0, Math.PI / 2, 0, 0, false);
     for (let i = 0; i < 4; i++) {
       const angle = (i * Math.PI) / 2 + Math.PI / 4;
@@ -369,7 +410,7 @@ export function buildTowerRig(type: TowerType): TowerRig {
     muzzleLocal = new THREE.Vector3(0, 0.2, 0.8);
   } else if (type === 'cannon') {
     // Bulky armored housing, orange heat vents, cyan trim and a heavy segmented barrel
-    const matTrim = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 2.0 });
+    const matTrim = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.1 });
     part(recoilGroup, new THREE.BoxGeometry(0.74, 0.06, 0.66), matHullDark, 0, 0.03, -0.1);
     part(recoilGroup, new THREE.BoxGeometry(0.66, 0.38, 0.6), matHullMid, 0, 0.25, -0.1);
     part(recoilGroup, new THREE.BoxGeometry(0.52, 0.07, 0.46), matHullDark, 0, 0.47, -0.12);
@@ -516,7 +557,6 @@ export function buildTowerRig(type: TowerType): TowerRig {
   root.add(hitMesh);
 
   root.scale.setScalar(TOWER_VISUAL_SCALE);
-  tagBloomParts(root);
 
   return {
     root,
@@ -534,7 +574,10 @@ export function buildTowerRig(type: TowerType): TowerRig {
 export interface EnemyRig {
   root: THREE.Group;
   bodyGroup: THREE.Group;
-  frozenOverlay: THREE.Mesh;
+  frozenOverlay: THREE.Group;
+  frozenMaterial: THREE.ShaderMaterial;
+  tintMaterials: THREE.MeshStandardMaterial[];
+  tintBaseColors: THREE.Color[];
   hpBarBg: THREE.Mesh;
   hpBarFill: THREE.Mesh;
   flashMaterials: THREE.MeshStandardMaterial[];
@@ -695,55 +738,99 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     bodyGroup.add(thruster);
     hpBarY = 1.6;
   } else if (type === 'trojan_brute') {
-    // Trojan Juggernaut (concept art: "Trojan"): armored hover war-horse with an open glowing cargo hatch
+    // Trojan Juggernaut (concept art: "Trojan"): armored war-horse hovering on four thrusters,
+    // built from smooth shapes (capsule body, extruded head silhouette, lathe nozzles)
     const matCore = new THREE.MeshStandardMaterial({ color: 0xff3b2f, emissive: 0xff1e42, emissiveIntensity: 3.4 });
+    const matPlate = new THREE.MeshStandardMaterial({ color: 0x2b2e35, metalness: 0.85, roughness: 0.32, side: THREE.DoubleSide });
+    flashMaterials.push(matPlate);
 
-    // Four hover thrusters instead of legs
+    // Hover thrusters: bell-shaped nozzles with a glowing exhaust ring
+    const nozzleProfile = [
+      new THREE.Vector2(0.0, 0.0),
+      new THREE.Vector2(0.11, 0.0),
+      new THREE.Vector2(0.095, 0.04),
+      new THREE.Vector2(0.07, 0.1),
+      new THREE.Vector2(0.075, 0.14),
+      new THREE.Vector2(0.0, 0.14),
+    ];
+    const nozzleGeo = new THREE.LatheGeometry(nozzleProfile, 16);
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        const px = sx * 0.21;
-        const pz = sz * 0.3 - 0.08;
-        part(bodyGroup, new THREE.CylinderGeometry(0.1, 0.12, 0.14, 8), matDark, px, 0.24, pz);
-        part(bodyGroup, new THREE.CylinderGeometry(0.11, 0.08, 0.035, 12), matAccent, px, 0.155, pz, 0, 0, 0, false);
+        const px = sx * 0.2;
+        const pz = sz * 0.28 - 0.08;
+        part(bodyGroup, nozzleGeo, matDark, px, 0.16, pz);
+        part(bodyGroup, new THREE.TorusGeometry(0.1, 0.018, 8, 20), matAccent, px, 0.16, pz, Math.PI / 2, 0, 0, false);
+        part(bodyGroup, new THREE.CircleGeometry(0.085, 16), matAccent, px, 0.155, pz, Math.PI / 2, 0, 0, false);
       }
     }
 
-    // Long armored torso with plates and red seams between them
-    part(bodyGroup, new THREE.BoxGeometry(0.5, 0.4, 0.86), matPrimary, 0, 0.52, -0.08);
-    part(bodyGroup, new THREE.BoxGeometry(0.44, 0.06, 0.8), matDark, 0, 0.75, -0.08);
+    // Barrel-shaped torso lying along the path direction
+    const torso = part(bodyGroup, new THREE.CapsuleGeometry(0.25, 0.5, 6, 16), matPrimary, 0, 0.5, -0.1, Math.PI / 2, 0, 0);
+    torso.scale.set(1, 1, 0.86);
+    // Curved saddle plates over the back, red light leaking from the seams between them
+    for (const pz of [-0.38, -0.14, 0.1]) {
+      part(bodyGroup, new THREE.CylinderGeometry(0.275, 0.275, 0.2, 18, 1, true, Math.PI * 0.38, Math.PI * 1.24), matPlate, 0, 0.5, pz, Math.PI / 2, 0, 0);
+    }
+    for (const pz of [-0.26, -0.02]) {
+      part(bodyGroup, new THREE.TorusGeometry(0.27, 0.012, 6, 24, Math.PI * 1.1), matAccent, 0, 0.5, pz, 0, 0, -Math.PI * 0.05, false);
+    }
+
+    // Half-open cargo hatch on the right flank with the hidden malware core glowing inside
+    const hatch = new THREE.Shape();
+    hatch.absarc(0, 0, 0.09, 0, Math.PI * 2, false);
+    const coreDisc = part(bodyGroup, new THREE.ShapeGeometry(hatch, 16), matCore, 0.262, 0.47, -0.22, 0, Math.PI / 2, 0, false);
+    coreDisc.scale.set(1.6, 1, 1);
+    part(bodyGroup, new THREE.TorusGeometry(0.1, 0.014, 6, 24), matDark, 0.262, 0.47, -0.22, 0, Math.PI / 2, 0, false).scale.set(1.6, 1, 1);
+    part(bodyGroup, new THREE.CylinderGeometry(0.16, 0.16, 0.02, 16, 1, false, 0, Math.PI), matPlate, 0.33, 0.6, -0.22, 0, 0, -0.85);
+
+    // Chest and neck
+    const chest = part(bodyGroup, new THREE.SphereGeometry(0.25, 18, 14), matPrimary, 0, 0.58, 0.3);
+    chest.scale.set(0.95, 1.05, 0.9);
+    part(bodyGroup, new THREE.CylinderGeometry(0.11, 0.17, 0.48, 14), matPrimary, 0, 0.86, 0.42, 0.45, 0, 0);
+    part(bodyGroup, new THREE.TorusGeometry(0.14, 0.012, 6, 20), matAccent, 0, 0.78, 0.38, Math.PI / 2 + 0.45, 0, 0, false);
+
+    // Head: extruded side silhouette of a horse head with bevelled edges
+    const headShape = new THREE.Shape();
+    headShape.moveTo(-0.12, 0.1);
+    headShape.quadraticCurveTo(-0.02, 0.19, 0.08, 0.13);
+    headShape.quadraticCurveTo(0.2, 0.06, 0.29, -0.02);
+    headShape.quadraticCurveTo(0.31, -0.08, 0.25, -0.11);
+    headShape.lineTo(0.08, -0.1);
+    headShape.quadraticCurveTo(-0.06, -0.08, -0.12, -0.02);
+    headShape.closePath();
+    const headDepth = 0.14;
+    const headGeo = new THREE.ExtrudeGeometry(headShape, {
+      depth: headDepth,
+      bevelEnabled: true,
+      bevelSize: 0.035,
+      bevelThickness: 0.04,
+      bevelSegments: 3,
+      curveSegments: 10,
+    });
+    headGeo.translate(0, 0, -headDepth / 2);
+    headGeo.rotateY(-Math.PI / 2);
+    part(bodyGroup, headGeo, matPrimary, 0, 1.08, 0.58, 0, 0, 0);
     for (const sx of [-1, 1]) {
-      for (const pz of [-0.36, -0.1, 0.16]) {
-        part(bodyGroup, new THREE.BoxGeometry(0.04, 0.3, 0.22), matDark, sx * 0.265, 0.53, pz);
-      }
-      for (const pz of [-0.23, 0.03, 0.28]) {
-        part(bodyGroup, new THREE.BoxGeometry(0.02, 0.3, 0.012), matAccent, sx * 0.262, 0.53, pz, 0, 0, 0, false);
-      }
-      part(bodyGroup, new THREE.BoxGeometry(0.02, 0.012, 0.76), matAccent, sx * 0.262, 0.7, -0.08, 0, 0, 0, false);
+      const eye = part(bodyGroup, new THREE.SphereGeometry(0.03, 10, 8), matAccent, sx * 0.105, 1.15, 0.66, 0, 0, 0, false);
+      eye.scale.set(0.6, 0.8, 1.4);
+      part(bodyGroup, new THREE.ConeGeometry(0.035, 0.12, 8), matDark, sx * 0.06, 1.27, 0.5, -0.25, 0, sx * -0.15);
     }
+    part(bodyGroup, new THREE.TorusGeometry(0.09, 0.01, 6, 16, Math.PI), matAccent, 0, 1.06, 0.79, 0, Math.PI / 2, Math.PI * 0.9, false);
 
-    // Half-open cargo hatch on the right flank, the hidden malware core glowing inside
-    part(bodyGroup, new THREE.BoxGeometry(0.03, 0.2, 0.28), matMatteBlack, 0.27, 0.46, -0.24, 0, 0, 0, false);
-    part(bodyGroup, new THREE.BoxGeometry(0.02, 0.13, 0.2), matCore, 0.28, 0.46, -0.24, 0, 0, 0, false);
-    part(bodyGroup, new THREE.BoxGeometry(0.03, 0.06, 0.3), matDark, 0.34, 0.58, -0.24, 0, 0, -0.9);
-
-    // Chest, neck and head leaning forward
-    part(bodyGroup, new THREE.BoxGeometry(0.46, 0.38, 0.22), matPrimary, 0, 0.6, 0.42, -0.25, 0, 0);
-    part(bodyGroup, new THREE.BoxGeometry(0.02, 0.3, 0.012), matAccent, 0.18, 0.62, 0.54, -0.25, 0, 0, false);
-    part(bodyGroup, new THREE.BoxGeometry(0.26, 0.48, 0.26), matPrimary, 0, 0.86, 0.48, 0.5, 0, 0);
-    part(bodyGroup, new THREE.BoxGeometry(0.02, 0.4, 0.012), matAccent, 0, 0.79, 0.615, 0.5, 0, 0, false);
-    part(bodyGroup, new THREE.BoxGeometry(0.25, 0.24, 0.42), matPrimary, 0, 1.06, 0.68, 0.35, 0, 0);
-    part(bodyGroup, new THREE.BoxGeometry(0.21, 0.17, 0.18), matDark, 0, 0.98, 0.88, 0.35, 0, 0);
-    for (const sx of [-1, 1]) {
-      part(bodyGroup, new THREE.BoxGeometry(0.03, 0.03, 0.02), matMatteBlack, sx * 0.05, 0.93, 0.97, 0.35, 0, 0, false);
-      const eye = part(bodyGroup, new THREE.SphereGeometry(0.035, 10, 8), matAccent, sx * 0.127, 1.1, 0.7, 0, 0, 0, false);
-      eye.scale.set(0.6, 1, 1.2);
-      part(bodyGroup, new THREE.ConeGeometry(0.04, 0.13, 4), matDark, sx * 0.08, 1.25, 0.56, -0.2, 0, 0);
+    // Armored mane: one sawtooth crest running down the back of the neck
+    const mane = new THREE.Shape();
+    mane.moveTo(0, 0);
+    const teeth = 6;
+    for (let i = 0; i < teeth; i++) {
+      mane.lineTo(-0.02 - i * 0.07, 0.09);
+      mane.lineTo(-0.07 - i * 0.07, 0.0);
     }
-    // Armored mane along the back of the neck
-    for (let i = 0; i < 6; i++) {
-      const t = i / 5;
-      part(bodyGroup, new THREE.BoxGeometry(0.16, 0.08, 0.06), matDark, 0, 0.73 + t * 0.42, 0.225 + t * 0.23, 0.5, 0, 0);
-    }
+    mane.lineTo(0, -0.04);
+    mane.closePath();
+    const maneGeo = new THREE.ExtrudeGeometry(mane, { depth: 0.05, bevelEnabled: false });
+    maneGeo.translate(0, 0, -0.025);
+    maneGeo.rotateY(-Math.PI / 2);
+    part(bodyGroup, maneGeo, matPlate, 0, 1.1, 0.46, -1.0, 0, 0);
     hpBarY = 1.6;
   } else if (type === 'aegis_dreadnought') {
     // STAGE 2 MID-BOSS: Firewall Breaker Hover Dreadnought
@@ -849,20 +936,70 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     hpBarY = 3.25;
   }
 
-  // Translucent Blinn-Phong Ice Crystal shell shown when slowed/frozen
-  const frozenMat = createBlinnPhongCrystalMaterial({
-    baseColor: 0x7dd3fc,
-    rimColor: 0xe0f2fe,
-    shininess: 80,
-    specularStrength: 1.7,
-    opacity: 0.46,
+  // Ice encasement shown while slowed: a frost patch spreading on the ground and a ring of ice
+  // shards around the enemy. The engine grows the shards out of the ground, makes them shimmer,
+  // tints the body icy blue and shatters everything into ice particles when the slow ends.
+  const frozenMaterial = createBlinnPhongCrystalMaterial({
+    baseColor: 0x9fdcff,
+    rimColor: 0xf0fbff,
+    shininess: 90,
+    specularStrength: 1.9,
+    opacity: 0.8,
     transparent: true,
   });
-  const frozenRadius = preset.isFinalBoss ? 1.45 : preset.isBoss ? 1.1 : type === 'trojan_brute' ? 0.74 : 0.5;
-  const frozenOverlay = new THREE.Mesh(new THREE.OctahedronGeometry(frozenRadius, 0), frozenMat);
-  frozenOverlay.position.y = preset.isFlying ? 0.88 : frozenRadius * 0.92;
+  const frostSize = preset.isFinalBoss ? 1.6 : preset.isBoss ? 1.25 : type === 'trojan_brute' ? 0.8 : 0.55;
+  const frozenOverlay = new THREE.Group();
+  const frostPatch = new THREE.Mesh(
+    new THREE.CircleGeometry(frostSize * 1.2, 32),
+    new THREE.MeshBasicMaterial({
+      map: getFrostTexture(),
+      color: 0xc8ecff,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+    })
+  );
+  frostPatch.rotation.x = -Math.PI / 2;
+  frostPatch.position.y = 0.03;
+  frozenOverlay.add(frostPatch);
+
+  const shardRing = new THREE.Group();
+  // Flying enemies get no ground shards; the crystals cling to the body in the air instead
+  shardRing.position.y = preset.isFlying ? 0.72 : 0;
+  const shardGeo = new THREE.ConeGeometry(1, 1, 5);
+  shardGeo.translate(0, 0.5, 0); // base at the origin so a shard grows up out of the ground
+  const shardCount = preset.isFlying ? 0 : preset.isBoss ? 11 : 8;
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < shardCount; i++) {
+    // Fixed pseudo-random spread so every enemy of a type freezes the same way
+    const jitter = Math.sin(i * 12.9898 + frostSize * 78.233) * 0.5 + 0.5;
+    const angle = (i / shardCount) * Math.PI * 2 + jitter * 0.4;
+    const radial = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+    const shard = new THREE.Mesh(shardGeo, frozenMaterial);
+    const radius = frostSize * (0.62 + 0.28 * jitter);
+    shard.position.set(radial.x * radius, 0, radial.z * radius);
+    const height = frostSize * (0.55 + 0.45 * jitter);
+    const width = frostSize * (0.1 + 0.08 * jitter);
+    shard.scale.set(width, height, width);
+    const tiltAxis = new THREE.Vector3().crossVectors(up, radial).normalize();
+    shard.quaternion.setFromAxisAngle(tiltAxis, 0.25 + 0.3 * jitter);
+    shardRing.add(shard);
+  }
+  // A crust of small crystals stuck to the body itself
+  const crystalCount = preset.isFlying ? 7 : 4;
+  for (let i = 0; i < crystalCount; i++) {
+    const angle = (i / crystalCount) * Math.PI * 2 + 0.6;
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(frostSize * 0.16, 0), frozenMaterial);
+    crystal.position.set(Math.cos(angle) * frostSize * 0.45, frostSize * (0.55 + 0.25 * (i % 2)), Math.sin(angle) * frostSize * 0.45);
+    crystal.scale.set(0.7, 1.5, 0.7);
+    crystal.rotation.z = Math.cos(angle) * 0.5;
+    shardRing.add(crystal);
+  }
+  frozenOverlay.add(shardRing);
   frozenOverlay.visible = false;
   root.add(frozenOverlay);
+  const tintMaterials = [...flashMaterials];
+  const tintBaseColors = tintMaterials.map((m) => m.color.clone());
 
   // Clean overhead 3D Health Bar
   const barW = preset.isFinalBoss ? 2.2 : preset.isBoss ? 1.65 : 0.86;
@@ -893,6 +1030,9 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     root,
     bodyGroup,
     frozenOverlay,
+    frozenMaterial,
+    tintMaterials,
+    tintBaseColors,
     hpBarBg,
     hpBarFill,
     flashMaterials,
