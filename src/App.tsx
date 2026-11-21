@@ -112,6 +112,18 @@ export default function App() {
   );
 
   // Mount Three.js engine ONCE
+  // Skala HUD mengikuti ukuran jendela: di layar/jendela kecil seluruh panel ikut mengecil
+  // (desain dasarnya 1440x860), dengan batas bawah supaya teks tetap terbaca
+  useEffect(() => {
+    const applyUiScale = () => {
+      const scale = Math.min(1, Math.max(0.66, Math.min(window.innerWidth / 1440, window.innerHeight / 860)));
+      document.documentElement.style.setProperty('--ui-scale', scale.toFixed(3));
+    };
+    applyUiScale();
+    window.addEventListener('resize', applyUiScale);
+    return () => window.removeEventListener('resize', applyUiScale);
+  }, []);
+
   useEffect(() => {
     const mount = canvasMountRef.current;
     if (!mount) return;

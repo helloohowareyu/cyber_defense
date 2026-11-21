@@ -96,6 +96,11 @@
   color: var(--color-silk-dim);
 }
 
+/* Seluruh HUD diperkecil sesuai --ui-scale yang dihitung dari ukuran jendela */
+.ui-scale {
+  zoom: var(--ui-scale, 1);
+}
+
 .hud-text-shadow {
   text-shadow: 0 1px 6px rgba(2, 6, 18, 0.92), 0 0 2px rgba(2, 6, 18, 0.95);
 }

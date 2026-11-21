@@ -37,7 +37,7 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
   return (
     <aside
       aria-label="Lab Grafika Komputer CIF65116"
-      className={`fixed top-16 z-30 pointer-events-auto cyber-panel rounded-[4px] w-[290px] text-silk p-4 text-xs transition-all ${
+      className={`ui-scale fixed top-16 z-30 pointer-events-auto cyber-panel rounded-[4px] w-[290px] text-silk p-4 text-xs transition-all ${
         shopOpen ? 'right-[330px]' : 'right-12'
       }`}
     >

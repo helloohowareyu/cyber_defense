@@ -106,7 +106,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
   const focusedShopType = hud.activeBuildType ?? hoveredShopId;
 
   return (
-    <div className="fixed inset-0 z-20 pointer-events-none">
+    <div className="ui-scale fixed inset-0 z-20 pointer-events-none">
       {/* =====================================================================
           TOP PERIMETER BAR
          ===================================================================== */}
@@ -165,7 +165,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
         </div>
 
         {/* Top-Right: Wave CTA, Auto-Wave, Speed, Lab Grafika, Music, SFX, Pause */}
-        <div className="pointer-events-auto flex items-center gap-1.5">
+        <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5">
           {!hud.waveActive && hud.wave < hud.totalWaves && (
             <button
               type="button"

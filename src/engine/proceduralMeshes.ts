@@ -615,7 +615,8 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
   const matAccent = new THREE.MeshStandardMaterial({
     color: preset.accentColor,
     emissive: preset.accentColor,
-    emissiveIntensity: 2.8,
+    // Di bawah ambang bloom (1.5): aksen neon tetap terlihat tapi tidak menyilaukan
+    emissiveIntensity: 1.15,
     metalness: 0.25,
     roughness: 0.2,
   });
@@ -681,7 +682,7 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     hpBarY = 1.15;
   } else if (type === 'worm_swarm') {
     // Zero-Day Worm (concept art: "Worm"): segmented armored body, red stripe, orange side lines
-    const matOrange = new THREE.MeshStandardMaterial({ color: 0xff8a1e, emissive: 0xff8a1e, emissiveIntensity: 2.4 });
+    const matOrange = new THREE.MeshStandardMaterial({ color: 0xff8a1e, emissive: 0xff8a1e, emissiveIntensity: 1.1 });
     const bodyY = 0.3;
     part(bodyGroup, zCylinder(0.1, 0.15, 0.24, 6), matPrimary, 0, bodyY, 0.36);
     part(bodyGroup, new THREE.BoxGeometry(0.1, 0.03, 0.02), matDark, 0, bodyY - 0.03, 0.485, 0, 0, 0, false);
@@ -740,7 +741,7 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
   } else if (type === 'trojan_brute') {
     // Trojan Juggernaut (concept art: "Trojan"): armored war-horse hovering on four thrusters,
     // built from smooth shapes (capsule body, extruded head silhouette, lathe nozzles)
-    const matCore = new THREE.MeshStandardMaterial({ color: 0xff3b2f, emissive: 0xff1e42, emissiveIntensity: 3.4 });
+    const matCore = new THREE.MeshStandardMaterial({ color: 0xff3b2f, emissive: 0xff1e42, emissiveIntensity: 1.35 });
     const matPlate = new THREE.MeshStandardMaterial({ color: 0x2b2e35, metalness: 0.85, roughness: 0.32, side: THREE.DoubleSide });
     flashMaterials.push(matPlate);
 
