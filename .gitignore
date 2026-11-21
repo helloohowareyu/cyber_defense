@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Godot cache and generated files
 .godot/
 *.import
@@ -38,8 +37,3 @@ firebase*.json
 # IDE files
 .idea/
 .vscode/
-=======
-# Godot 4+ specific ignores
-.godot/
-/android/
->>>>>>> e05f206 ((feat) code by Nur)
