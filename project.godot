@@ -10,6 +10,7 @@ config_version=5
 
 [application]
 
+<<<<<<< HEAD
 config/name="game tower defence 2d"
 run/main_scene="res://Scenes/ui/mainMenu/mainMenu.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
@@ -42,6 +43,17 @@ LeftClick={
 ]
 }
 
+=======
+config/name="CYBER DEFENSE"
+run/main_scene="uid://dk4yuvv1vewr5"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[display]
+
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+>>>>>>> e05f206 ((feat) code by Nur)
 [physics]
 
 3d/physics_engine="Jolt Physics"
