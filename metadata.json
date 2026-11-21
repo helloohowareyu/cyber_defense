@@ -1,0 +1,5 @@
+{
+  "name": "Cyber Defense 3D",
+  "description": "Game Tower Defense 3D futuristik berbasis WebGL/Three.js yang diadaptasi dari proyek Godot Engine mata kuliah Komputer Grafis (CIF65116), mempertahankan desain peta 3D Nur dan shader custom Blinn-Phong, Scrolling UV Laser, serta Alpha-Blended Range Ring.",
+  "requestFramePermissions": []
+}
