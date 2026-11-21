@@ -37,3 +37,5 @@ firebase*.json
 # IDE files
 .idea/
 .vscode/
+
+.vercel

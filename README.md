@@ -1,110 +1,176 @@
-# CYBER DEFENSE 3D
+# CYBER DEFENSE
 
-Game **Tower Defense 3D** futuristik berbasis PC/Desktop dan Web yang dikembangkan menggunakan **Godot Engine 4.7.2 Stable (Vulkan `Forward+`)** serta versi interaktif web **React + Three.js** untuk proyek mata kuliah **Komputer Grafis (CIF65116)**.
+Game *tower defense* 3D bertema keamanan siber. Pemain menjaga **Energy Core** dari 15 gelombang malware dengan membangun, meng-upgrade, dan mengatur enam jenis menara pertahanan di sekitar jalur musuh.
+
+Dibuat untuk mata kuliah **Komputer Grafis (CIF65116)**, Fakultas Ilmu Komputer, Universitas Brawijaya.
+
+- **Versi utama:** web, dibangun dengan React 19, Three.js, TypeScript, dan Vite. Bisa dimainkan langsung di browser.
+- **Versi prototipe:** Godot Engine 4.7.2 (Vulkan Forward+), masih tersimpan di repo ini.
+
+Main langsung di browser: **[link Vercel]**
 
 ---
 
-## 🎯 Gambaran Umum Proyek
+## Tim
 
-Pemain bertugas melindungi **Energy Core** dari gelombang serangan musuh cyber (*Goblin*, *Orc*, *Harpy*, dan Boss *Demon King*) dengan membangun, meng-upgrade, dan mengatur strategi target 4 jenis menara pertahanan (*Laser*, *Cannon*, *Freeze*, dan *Armor Pen Tower*) di sepanjang jalur grid arena.
+**Easy Run 5k Sub 20**
 
----
-
-## 👥 Pembagian Tim
-
-| Anggota | Peran | Fokus Modul |
+| Anggota | Peran | Fokus |
 | :--- | :--- | :--- |
-| **Zulfan** | Project Manager & UI/UX | Desain antarmuka, Main Menu, HUD, Radial Menu, aset visual |
-| **Abiyu** | Core Game Logic | Alur permainan, peta, pergerakan waypoint musuh, wave spawner |
-| **Yusuf (Ucup)** | Tower & Combat System | 4 jenis Tower 3D, targeting, proyektil, damage/armor, procedural mesh & custom shaders |
-| **Nur** | Economy & Supporting System | Sistem Gold, pembelian/upgrade/sell menara, audio SFX, penyimpanan |
+| **Zulfan** | Project Manager, Economy & Supporting System | Sistem gold, beli/upgrade/jual menara, Overclock pad, audio & musik, simpan rekor, UI |
+| **Nur** | UI/UX & Peta Arena | Peta dan jalur 3D, tata letak arena, aset visual |
+| **Abiyu** | Core Game Logic | Alur permainan, gelombang musuh, pergerakan musuh di jalur |
+| **Yusuf (Ucup)** | Tower & Combat System | Enam menara, targeting, proyektil, damage/armor, mesh prosedural & shader |
 
 ---
 
-## 🚀 Panduan Memulai Game (Quick Start)
+## Menjalankan versi web
 
-### 1. Menjalankan Versi Desktop (Godot Engine 4.7.2 Stable) — *Target Utama Kuliah*
+Butuh **Node.js 20** ke atas.
 
-#### A. Melalui Godot Editor UI:
-1. Buka Godot Engine 4.7.2 dan import folder project ini.
-2. Pada panel **FileSystem**, navigasi ke folder:
-   - `res://src/combat/game_3d/cyber_defense_3d.tscn` (Game 3D Utama).
-3. Klik kanan lalu pilih **Run** atau tekan tombol **F6** (*Run Current Scene*).
-4. Klik tombol **"MULAI OPERASI PERTAHANAN"** pada Title Screen untuk masuk ke arena permainan.
-
-#### B. Melalui Terminal / Command Line:
 ```bash
-# Menjalankan Game 3D Utama:
-godot res://src/combat/game_3d/cyber_defense_3d.tscn
+npm install     # pasang dependensi (wajib diulang setelah pull kalau package.json berubah)
+npm run dev     # buka http://localhost:3000
+```
 
-# Menjalankan Arena Uji Sandbox Combat (Uji Tower, Damage Math, & Shader):
-godot res://src/combat/sandbox/combat_sandbox.tscn
+Perintah lain:
 
-# Menjalankan Peta Arena 3D Nur:
-godot res://src/nur/node_3d.tscn
+```bash
+npm run build                      # build produksi ke folder dist/
+npm run preview                    # jalankan hasil build secara lokal
+npm run lint                       # cek tipe TypeScript
+npx tsx src/game/gameLogic.test.ts # unit test logika game
+```
 
-# Menjalankan 259 Unit & E2E Automated Tests (Headless):
-godot --headless -s res://tests/combat/test_combat_system.gd
+### Deploy ke Vercel
+
+Vercel otomatis mengenali projek ini sebagai Vite (build `vite build`, output `dist`).
+
+```bash
+npx vercel login
+npx vercel --prod
 ```
 
 ---
 
-### 2. Menjalankan Versi Web (React + Three.js)
+## Cara bermain
 
-```bash
-# 1. Pasang dependensi
-npm install
+1. Di menu utama, pilih tingkat kesulitan lalu tekan **START**.
+2. Pilih menara di **Toko menara** (panel kanan), lalu klik area kosong di dek arena untuk memasangnya.
+3. Tekan **Mulai wave** saat siap. Musuh berjalan di jalur menuju Energy Core.
+4. Klik menara untuk melihat statistiknya, mengganti prioritas target, upgrade, atau menjualnya.
+5. Bertahanlah sampai wave 15 dan kalahkan **OMEGA-0 Rootkit**. Kalau HP Energy Core habis, permainan berakhir.
 
-# 2. Jalankan development server
-npm run dev
+### Tingkat kesulitan
 
-# 3. Buka URL di browser (biasanya http://localhost:3000)
-```
+| Mode | Gold awal | HP core | HP musuh | Harga menara |
+| :--- | :---: | :---: | :---: | :---: |
+| Mudah | 320 | 50 | 80% | 90% |
+| Sedang | 240 | 35 | 100% | 100% |
+| Sulit | 190 | 20 | 128% | 112% |
+
+### Menara
+
+Harga di bawah adalah harga mode Sedang. Setiap menara bisa di-upgrade sampai **Lv.4**, dan di level itu membuka kemampuan ultimate.
+
+| Menara | Harga | Peran | Ultimate (tombol) |
+| :--- | :---: | :--- | :--- |
+| Laser Prism | 100G | Laser cepat satu target | Prism Overdrive (Q) |
+| Plasma Cannon | 140G | Ledakan area | Orbital EMP Barrage (E) |
+| Cryo Emitter | 120G | Memperlambat musuh | Absolute Zero (R) |
+| Railgun Sniper | 175G | Menembus armor 100% | Hyper-Rail Lance (T) |
+| Tesla Arc Relay | 150G | Petir berantai ke beberapa musuh | Ion Overload Storm (Y) |
+| Quantum Farm | 240G | Menghasilkan gold | Quantum Jackpot (F) |
+
+- **Jual menara:** uang kembali 70% dari total yang sudah dikeluarkan.
+- **Overclock pad:** pad terkunci di arena bisa dibeli (90G/120G/150G sesuai mode). Menara di atasnya mendapat +12% jangkauan dan kecepatan tembak.
+- **Prioritas target:** First (paling depan), Strong (HP terbanyak), Last (paling belakang), Close (paling dekat).
+
+### Musuh
+
+| Musuh | Ciri |
+| :--- | :--- |
+| Bit-Crawler | Drone malware dasar |
+| Zero-Day Worm | Kecil, cepat, datang bergerombol |
+| Packet Phantom | Melayang, sedikit berarmor |
+| Trojan Juggernaut | Mech berarmor tebal |
+| Firewall Breaker | Mid-boss (wave 10 dan 13) |
+| OMEGA-0 Rootkit | Boss akhir (wave 15) |
+
+Gelombang dibagi menjadi Stage 1 (wave 1–5), Stage 2 (wave 6–10), Stage 3 (wave 11–14), dan Final Stage (wave 15).
+
+### Kontrol
+
+| Aksi | Kontrol |
+| :--- | :--- |
+| Pilih menara dari toko | Klik di toko, atau tombol **1–6** |
+| Pasang menara | Klik kiri di dek arena |
+| Pilih menara yang sudah ada | Klik kiri pada menara |
+| Mulai wave berikutnya | Tombol **Mulai wave** atau **Spasi** |
+| Upgrade / jual menara terpilih | **U** / **X** atau **Delete** |
+| Ultimate menara Lv.4 | **Q, E, R, T, Y, F** |
+| Putar kamera | Klik kanan + geser |
+| Geser kamera | Tombol panah |
+| Zoom | Scroll mouse |
+| Batal / tutup panel / jeda | **Esc** |
+| Jeda | **P** |
+| Buka/tutup toko | **H** |
+| Lab Grafika | **G** |
+| Proyeksi perspektif ↔ ortografik | **O** |
+| Efek suara / musik on-off | **M** / **N** |
 
 ---
 
-## 🕹️ Panduan Kontrol & Cara Bermain (Gameplay Guide)
+## Materi Komputer Grafis yang diterapkan
 
-| Aksi | Kontrol | Penjelasan Gameplay |
-| :--- | :--- | :--- |
-| **Mulai Wave Serangan** | Klik Tombol **"KIRIM GELOMBANG SEKARANG"** | Memulai invasi musuh lebih awal untuk mendapatkan bonus gold taktis. |
-| **Pilih Slot Menara** | **Klik Kiri** pada Pad/Slot Grid | Membuka Radial Menu untuk memilih menara yang ingin dibangun. |
-| **Membangun Menara** | **Klik Icon Tower** pada Menu Pilihan | - **Laser Tower (100G):** Serangan laser konstan (*single-target*).<br>- **Cannon Tower (125G):** Proyektil balistik ledakan area (*AOE splash*).<br>- **Freeze Tower (150G):** Memperlambat (*slow debuff*) kecepatan musuh.<br>- **Armor Pen Tower (175G):** Menembus pertahanan armor musuh tebal. |
-| **Inspect / Upgrade / Sell** | **Klik Kiri** pada Menara yang sudah berdiri | Membuka panel detail stats. Tekan **Upgrade** untuk menaikkan jangkauan & damage, atau **Sell** untuk refund 70% gold. |
-| **Ubah Target Mode** | Tombol Targeting di Panel Tower | Ubah prioritas tembakan: `FRONT_MOST` (terdepan), `LOWEST_HP` (darah terendah), atau `CLOSEST` (paling dekat dengan menara). |
-| **Rotasi Kamera 3D** | **Klik Kanan + Drag** mouse | Memutar sudut pandang kamera di sekitar arena grid. |
-| **Zoom Kamera 3D** | **Scroll Wheel** mouse | Memperbesar (*zoom in*) atau memperkecil (*zoom out*) pandangan. |
-| **Jeda / Lanjut** | Tombol **Space** atau Icon **Pause** di HUD | Menghentikan sementara simulasi tanpa menutup sesi. |
+Tekan **G** saat bermain untuk membuka **Lab Grafika**, panel untuk demo materi kuliah:
+
+- Proyeksi kamera perspektif dan ortografik, serta beberapa sudut pandang kamera
+- Mode wireframe
+- Shadow mapping (PCF Soft)
+- Shader GLSL kustom: Blinn-Phong untuk kristal es, UV bergulir pada laser, cincin jangkauan dengan alpha blending
+- Additive blending dan bloom selektif untuk tembakan, ledakan, dan efek kena musuh
+- Model menara dan musuh dibuat secara prosedural (ExtrudeGeometry, LatheGeometry, TubeGeometry)
 
 ---
 
-## 📂 Struktur Direktori Utama
+## Struktur folder
 
 ```text
 cyber_defense/
-├── project.godot            # Konfigurasi Godot 4.7.2 Forward+ (Vulkan)
-├── package.json             # Konfigurasi Web App (React 19, Three.js, Tailwind v4)
-├── komputer grafis.md       # Game Design Document (GDD) utama tim
-├── docs/                    # Dokumentasi kurikulum, kontrak tim, modul, & panduan
-│   ├── 00_YUSUF_MASTER_PLAN.md                  # Master Plan pengerjaan modul Yusuf
-│   ├── 01_CODING_RULES_AND_ANTI_AI_SLOP.md      # Standar coding & anti-slop
-│   ├── 06_PANDUAN_DEMO_DAN_LAPORAN_KULIAH.md    # Panduan demo & RPS CIF65116
-│   └── 07_PANDUAN_RUNNING_DAN_ANALISIS_REPO.md  # Analisis arsitektur & panduan running
-├── src/combat/              # Modul Tower & Combat 3D + Standalone Game 3D Godot
-│   ├── game_3d/             # Game 3D mandiri lengkap (HUD, Spawner, Economy, Camera)
-│   ├── towers/              # Class & logic 4 menara 3D
-│   ├── shaders/             # Custom Godot Shaders (Phong, UV Scroll, Range Ring)
-│   └── tools/               # Procedural asset generator
-├── src/nur/                 # Folder isolasi scene & peta 3D pengerjaan Nur
-├── src/engine/              # Implementasi WebGL / Three.js Engine
-└── tests/combat/            # 259 Automated Tests (Combat Math, Tower, & E2E Game 3D)
+├── index.html, vite.config.ts, package.json   # Konfigurasi versi web
+├── src/
+│   ├── App.tsx            # Penghubung React dengan engine game
+│   ├── components/        # UI: menu utama, HUD, toko, modal, Lab Grafika
+│   ├── engine/            # Engine Three.js: render, kamera, menara, musuh, efek visual
+│   ├── game/              # Data & logika: preset menara/musuh/wave, audio, simpan rekor, test
+│   ├── audio/             # Musik latar (menu & saat wave)
+│   ├── combat/            # Versi prototipe Godot: menara, combat, shader, game 3D
+│   └── nur/               # Versi prototipe Godot: peta & jalur 3D
+├── project.godot          # Konfigurasi projek Godot
+├── tests/combat/          # Test otomatis versi Godot
+├── docs/                  # Dokumentasi tim dan panduan demo
+└── komputer grafis.md     # Game Design Document (GDD)
 ```
 
 ---
 
-## 📚 Dokumentasi Pendukung Lengkap
+## Versi prototipe Godot
 
-- [`docs/07_PANDUAN_RUNNING_DAN_ANALISIS_REPO.md`](./docs/07_PANDUAN_RUNNING_DAN_ANALISIS_REPO.md) — Panduan mendalam analisis teknis & eksekusi repositori.
-- [`docs/06_PANDUAN_DEMO_DAN_LAPORAN_KULIAH.md`](./docs/06_PANDUAN_DEMO_DAN_LAPORAN_KULIAH.md) — Panduan demo presentasi kuliah Komputer Grafis & keterkaitan materi OpenGL/Vulkan.
-- [`docs/05_MODULE_OVERVIEW_READABLE.md`](./docs/05_MODULE_OVERVIEW_READABLE.md) — Ringkasan modul Tower, Combat, dan integrasi game 3D.
-- [`docs/03_TEAM_INTEGRATION_CONTRACTS.md`](./docs/03_TEAM_INTEGRATION_CONTRACTS.md) — Kontrak integrasi sinyal dan fungsi antar anggota tim.
+Buka folder ini di **Godot Engine 4.7.2**, lalu jalankan scene `res://src/combat/game_3d/cyber_defense_3d.tscn` dengan **F6**. Lewat terminal:
+
+```bash
+godot res://src/combat/game_3d/cyber_defense_3d.tscn              # game 3D
+godot res://src/combat/sandbox/combat_sandbox.tscn                # arena uji combat
+godot res://src/nur/node_3d.tscn                                  # peta arena Nur
+godot --headless -s res://tests/combat/test_combat_system.gd      # test otomatis
+```
+
+---
+
+## Dokumentasi pendukung
+
+- [`docs/07_PANDUAN_RUNNING_DAN_ANALISIS_REPO.md`](./docs/07_PANDUAN_RUNNING_DAN_ANALISIS_REPO.md): analisis repo dan cara menjalankan
+- [`docs/06_PANDUAN_DEMO_DAN_LAPORAN_KULIAH.md`](./docs/06_PANDUAN_DEMO_DAN_LAPORAN_KULIAH.md): panduan demo dan laporan kuliah
+- [`docs/05_MODULE_OVERVIEW_READABLE.md`](./docs/05_MODULE_OVERVIEW_READABLE.md): ringkasan modul
+- [`docs/03_TEAM_INTEGRATION_CONTRACTS.md`](./docs/03_TEAM_INTEGRATION_CONTRACTS.md): kontrak integrasi antar anggota
