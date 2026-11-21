@@ -8,6 +8,11 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   AOE_GDD_TO_METERS,
   CameraPreset,
@@ -60,6 +65,10 @@ import {
   buildEnemyRig,
   buildRangeRingGeometry,
   buildTowerRig,
+  BLOOM_LAYER,
+  createGlowTexture,
+  neonBoost,
+  TOWER_VISUAL_SCALE,
   EnemyRig,
   TowerRig,
 } from './proceduralMeshes';
@@ -215,6 +224,7 @@ interface EnemyEntity {
 }
 
 interface ProjectileEntity {
+  trailAccum: number;
   mesh: THREE.Mesh;
   type: TowerType;
   startPos: THREE.Vector3;
@@ -245,6 +255,16 @@ interface BeamTrailVfx {
   mat: THREE.MeshBasicMaterial;
   age: number;
   duration: number;
+}
+
+// Short-lived additive glow sprite: muzzle flashes, hit flares, projectile trails, death bursts
+interface FlashVfx {
+  sprite: THREE.Sprite;
+  mat: THREE.SpriteMaterial;
+  age: number;
+  duration: number;
+  startSize: number;
+  endSize: number;
 }
 
 interface ParticleSlot {
@@ -304,6 +324,15 @@ export class CyberDefenseEngine {
   private projectiles: ProjectileEntity[] = [];
   private shockwaves: ShockwaveVfx[] = [];
   private beamTrails: BeamTrailVfx[] = [];
+  private flashes: FlashVfx[] = [];
+  private glowTex: THREE.Texture;
+
+  // Selective bloom: only objects on BLOOM_LAYER (neon parts, beams, flashes, particles) glow;
+  // the arena itself is composited untouched on top of it
+  private bloomComposer: EffectComposer;
+  private bloomRenderPass: RenderPass;
+  private composer: EffectComposer;
+  private renderPass: RenderPass;
 
   // Pooled InstancedMesh particles (zero GC in render loop)
   private particleMesh: THREE.InstancedMesh;
@@ -449,6 +478,47 @@ export class CyberDefenseEngine {
       190
     );
 
+    const bloomScale = this.isSoftwareGl ? 0.5 : 1;
+    this.bloomComposer = new EffectComposer(this.renderer);
+    this.bloomComposer.renderToScreen = false;
+    this.bloomComposer.setPixelRatio(this.renderer.getPixelRatio() * bloomScale);
+    this.bloomComposer.setSize(width, height);
+    this.bloomRenderPass = new RenderPass(this.scene, this.perspCamera);
+    this.bloomComposer.addPass(this.bloomRenderPass);
+    this.bloomComposer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.7, 0.35, 0.0));
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.setPixelRatio(this.renderer.getPixelRatio());
+    this.composer.setSize(width, height);
+    this.renderPass = new RenderPass(this.scene, this.perspCamera);
+    this.composer.addPass(this.renderPass);
+    const mixPass = new ShaderPass(
+      new THREE.ShaderMaterial({
+        uniforms: {
+          tDiffuse: { value: null },
+          bloomTexture: { value: this.bloomComposer.renderTarget2.texture },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D tDiffuse;
+          uniform sampler2D bloomTexture;
+          varying vec2 vUv;
+          void main() {
+            gl_FragColor = texture2D(tDiffuse, vUv) + texture2D(bloomTexture, vUv);
+          }
+        `,
+      }),
+      'tDiffuse'
+    );
+    this.composer.addPass(mixPass);
+    this.composer.addPass(new OutputPass());
+
     // 3-Point Warm/Cool Studio Lighting Rig
     const hemiLight = new THREE.HemisphereLight(0x8fd4ff, 0x0b152a, 0.95);
     this.scene.add(hemiLight);
@@ -486,6 +556,7 @@ export class CyberDefenseEngine {
     this.scene.add(this.entityRoot);
 
     this.laserPulseTex = createLaserPulseTexture();
+    this.glowTex = createGlowTexture();
     this.contactShadowTex = createContactShadowTexture();
 
     // Pooled InstancedMesh Particles
@@ -494,6 +565,7 @@ export class CyberDefenseEngine {
     this.particleMesh = new THREE.InstancedMesh(pGeo, pMat, PARTICLE_POOL_SIZE);
     this.particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.particleMesh.frustumCulled = false;
+    this.particleMesh.layers.enable(BLOOM_LAYER);
     this.scene.add(this.particleMesh);
     for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
       this.particles.push({
@@ -586,6 +658,8 @@ export class CyberDefenseEngine {
     this.clearEntities();
     this.laserPulseTex.dispose();
     this.contactShadowTex.dispose();
+    this.bloomComposer.dispose();
+    this.composer.dispose();
     this.renderer.dispose();
     if (dom.parentNode === this.container) {
       this.container.removeChild(dom);
@@ -609,6 +683,29 @@ export class CyberDefenseEngine {
     this.orthoCamera.updateProjectionMatrix();
 
     this.renderer.setSize(width, height);
+    this.bloomComposer.setSize(width, height);
+    this.composer.setSize(width, height);
+  }
+
+  // Pass 1 renders only BLOOM_LAYER objects on black and blurs them; pass 2 renders the full
+  // scene and adds that glow on top before tone mapping.
+  private renderBloomFrame(): void {
+    const camera = this.activeCamera;
+    const background = this.scene.background;
+    const fog = this.scene.fog;
+    const savedMask = camera.layers.mask;
+
+    this.scene.background = null;
+    this.scene.fog = null;
+    camera.layers.set(BLOOM_LAYER);
+    this.bloomRenderPass.camera = camera;
+    this.bloomComposer.render();
+
+    camera.layers.mask = savedMask;
+    this.scene.background = background;
+    this.scene.fog = fog;
+    this.renderPass.camera = camera;
+    this.composer.render();
   }
 
   private handleContextMenu = (e: MouseEvent) => {
@@ -1099,10 +1196,12 @@ export class CyberDefenseEngine {
     let laserBeamMat: THREE.ShaderMaterial | undefined;
     if (type === 'laser') {
       laserBeamMat = createLaserBeamMaterial(this.laserPulseTex, preset.accentColor);
-      const beamGeo = new THREE.PlaneGeometry(1, 0.22);
+      const beamGeo = new THREE.PlaneGeometry(1, 0.3);
       beamGeo.translate(0.5, 0, 0);
       laserBeamMesh = new THREE.Mesh(beamGeo, laserBeamMat);
+      laserBeamMesh.layers.enable(BLOOM_LAYER);
       const crossPlane = new THREE.Mesh(beamGeo, laserBeamMat);
+      crossPlane.layers.enable(BLOOM_LAYER);
       crossPlane.rotation.x = Math.PI / 2;
       laserBeamMesh.add(crossPlane);
       laserBeamMesh.visible = false;
@@ -1170,7 +1269,7 @@ export class CyberDefenseEngine {
     if (tower.level >= 3 && tower.rig.upgradeNodes[1]) tower.rig.upgradeNodes[1].visible = true;
     if (tower.level >= 4 && tower.rig.upgradeNodes[2]) tower.rig.upgradeNodes[2].visible = true;
     const scaleBoost = 1 + (tower.level - 1) * 0.055;
-    tower.rig.root.scale.setScalar(scaleBoost);
+    tower.rig.root.scale.setScalar(scaleBoost * TOWER_VISUAL_SCALE);
 
     const overclocked = tower.overclockPadId !== null;
     const newRange = getScaledRangeMeters(preset.baseRangeGdd, tower.level, overclocked);
@@ -1299,9 +1398,10 @@ export class CyberDefenseEngine {
       )[0];
       if (strongest) {
         const skyOrigin = new THREE.Vector3(strongest.position.x, 16, strongest.position.z);
-        this.spawnBeamSegment(skyOrigin, strongest.position, 0xff1744, 0.22, 0.45);
-        this.spawnShockwave(strongest.position, 3.4, [1.0, 0.2, 0.35, 0.95], [1.0, 0.05, 0.15, 0.0]);
-        this.spawnParticles(strongest.position, 30, 0xff1744, 6.2, 0.65);
+        this.spawnEnergyBeam(skyOrigin, strongest.position, preset.accentColor, 0.22, 0.45);
+        this.spawnFlash(strongest.position.clone().setY(1.0), preset.accentColor, 3.5, 0.45);
+        this.spawnShockwave(strongest.position, 3.4, [0.6, 0.4, 1.0, 0.95], [0.4, 0.2, 1.0, 0.0]);
+        this.spawnParticles(strongest.position, 30, preset.accentColor, 6.2, 0.65);
         this.damageEnemy(strongest, 520, true, tower.id);
         this.showBanner(`ULTIMATE: Hyper-Rail menghantam ${ENEMY_PRESETS[strongest.type].displayName} (520 True DMG)!`);
       } else {
@@ -1530,6 +1630,12 @@ export class CyberDefenseEngine {
     }
     this.beamTrails = [];
 
+    for (const f of this.flashes) {
+      this.entityRoot.remove(f.sprite);
+      f.mat.dispose();
+    }
+    this.flashes = [];
+
     for (let i = 0; i < this.particles.length; i++) {
       this.particles[i].active = false;
       this._mat4.makeScale(0, 0, 0);
@@ -1617,6 +1723,11 @@ export class CyberDefenseEngine {
         enemy.isFinalBoss ? 0.95 : enemy.isBoss ? 0.72 : 0.46
       );
       this.pushFloatText(`+${enemy.rewardGold}G`, enemy.position, '#4ade80');
+      const deathCenter = enemy.position.clone().add(new THREE.Vector3(0, enemy.isFlying ? 1.25 : 0.75, 0));
+      this.spawnFlash(deathCenter, ENEMY_PRESETS[enemy.type].accentColor, enemy.isBoss ? 3.2 : 1.5, enemy.isBoss ? 0.5 : 0.32, 2.0);
+      if (!enemy.isBoss) {
+        this.spawnShockwave(enemy.position, 1.5, [1.0, 0.25, 0.3, 0.75], [1.0, 0.1, 0.2, 0.0]);
+      }
 
       if (enemy.isFinalBoss) {
         this.hitstopTimer = 0.09;
@@ -1646,13 +1757,14 @@ export class CyberDefenseEngine {
     geo.rotateZ(Math.PI / 2);
     geo.translate(dist * 0.5, 0, 0);
     const mat = new THREE.MeshBasicMaterial({
-      color: colorHex,
+      color: new THREE.Color(colorHex).multiplyScalar(neonBoost(colorHex, 0.8, 1.0, 2.4)),
       transparent: true,
       opacity: 0.92,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.layers.enable(BLOOM_LAYER);
     mesh.position.copy(from);
     const dir = this._v1.subVectors(to, from).normalize();
     mesh.quaternion.setFromUnitVectors(this._xAxis, dir);
@@ -1660,15 +1772,41 @@ export class CyberDefenseEngine {
     this.beamTrails.push({ mesh, mat, age: 0, duration });
   }
 
+  // Glowing beam with a hot white core, used for railgun shots and lightning arcs
+  private spawnEnergyBeam(from: THREE.Vector3, to: THREE.Vector3, colorHex: number, radius: number, duration: number): void {
+    this.spawnBeamSegment(from, to, colorHex, radius, duration);
+    this.spawnBeamSegment(from, to, 0xffffff, radius * 0.35, duration * 0.8);
+  }
+
+  private spawnFlash(pos: THREE.Vector3, colorHex: number, size: number, duration: number, endScale = 1.7): void {
+    const mat = new THREE.SpriteMaterial({
+      map: this.glowTex,
+      color: new THREE.Color(colorHex).multiplyScalar(neonBoost(colorHex, 0.7, 1.0, 2.2)),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.layers.enable(BLOOM_LAYER);
+    sprite.position.copy(pos);
+    const startSize = size * 0.8;
+    sprite.scale.set(startSize, startSize, 1);
+    this.entityRoot.add(sprite);
+    this.flashes.push({ sprite, mat, age: 0, duration, startSize, endSize: startSize * endScale });
+  }
+
   private fireTowerAttack(tower: TowerEntity, target: EnemyEntity, damage: number): void {
     const preset = TOWER_PRESETS[tower.type];
     const muzzleWorld = tower.rig.muzzleLocal.clone().applyMatrix4(tower.rig.turretHead.matrixWorld);
-    const targetWorld = target.position.clone().add(new THREE.Vector3(0, target.isFlying ? 0.9 : 0.52, 0));
+    const targetWorld = target.position.clone().add(new THREE.Vector3(0, target.isFlying ? 1.25 : 0.75, 0));
 
     if (tower.type === 'laser') {
       this.damageEnemy(target, damage, false, tower.id);
       audioSynth.playLaser();
-      this.spawnParticles(targetWorld, 5, preset.accentColor, 2.2, 0.25);
+      this.spawnParticles(targetWorld, 6, preset.accentColor, 2.6, 0.28);
+      this.spawnFlash(muzzleWorld, preset.accentColor, 0.55, 0.12);
+      this.spawnFlash(targetWorld, preset.accentColor, 0.8, 0.18);
+      this.spawnBeamSegment(muzzleWorld, targetWorld, 0xffffff, 0.022, 0.12);
 
       if (tower.laserBeamMesh) {
         const dist = muzzleWorld.distanceTo(targetWorld);
@@ -1686,8 +1824,9 @@ export class CyberDefenseEngine {
           (e) => e.alive && e.id !== target.id && distanceXZ(tower.position, e.position) <= 10.5
         );
         if (secondary) {
-          const secPos = secondary.position.clone().add(new THREE.Vector3(0, 0.55, 0));
-          this.spawnBeamSegment(muzzleWorld, secPos, 0x38bdf8, 0.07, 0.16);
+          const secPos = secondary.position.clone().add(new THREE.Vector3(0, 0.75, 0));
+          this.spawnEnergyBeam(muzzleWorld, secPos, preset.accentColor, 0.07, 0.16);
+          this.spawnFlash(secPos, preset.accentColor, 0.8, 0.18);
           this.damageEnemy(secondary, damage * 0.85, false, tower.id);
         }
       }
@@ -1703,9 +1842,10 @@ export class CyberDefenseEngine {
 
       audioSynth.playTesla();
       for (let hop = 0; hop < maxChains && curr; hop++) {
-        const currPos = curr.position.clone().add(new THREE.Vector3(0, curr.isFlying ? 0.9 : 0.55, 0));
-        this.spawnBeamSegment(prevPos, currPos, hop === 0 ? 0xc084fc : 0x38bdf8, 0.065, 0.22);
-        this.spawnParticles(currPos, 6, 0xc084fc, 2.8, 0.28);
+        const currPos = curr.position.clone().add(new THREE.Vector3(0, curr.isFlying ? 1.25 : 0.75, 0));
+        this.spawnEnergyBeam(prevPos, currPos, preset.accentColor, 0.065, 0.22);
+        this.spawnParticles(currPos, 6, preset.accentColor, 2.8, 0.28);
+        this.spawnFlash(currPos, preset.accentColor, 0.75, 0.2);
         this.damageEnemy(curr, damage * Math.pow(0.88, hop), false, tower.id);
         prevPos = currPos;
 
@@ -1729,8 +1869,10 @@ export class CyberDefenseEngine {
     if (tower.type === 'armor_pen') {
       this.damageEnemy(target, damage, true, tower.id);
       audioSynth.playArmorPen();
-      this.spawnParticles(targetWorld, 12, preset.accentColor, 4.4, 0.35);
-      this.spawnBeamSegment(muzzleWorld, targetWorld, 0xff3b5c, 0.06, 0.22);
+      this.spawnParticles(targetWorld, 14, preset.accentColor, 4.6, 0.38);
+      this.spawnEnergyBeam(muzzleWorld, targetWorld, preset.accentColor, 0.09, 0.26);
+      this.spawnFlash(muzzleWorld, preset.accentColor, 0.9, 0.16);
+      this.spawnFlash(targetWorld, preset.accentColor, 1.3, 0.24);
       return;
     }
 
@@ -1745,7 +1887,21 @@ export class CyberDefenseEngine {
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.copy(muzzleWorld);
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: this.glowTex,
+        color: new THREE.Color(preset.accentColor).multiplyScalar(neonBoost(preset.accentColor, 0.7, 1.0, 2.0)),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    halo.scale.setScalar(isCannon ? 1.0 : 0.75);
+    halo.layers.enable(BLOOM_LAYER);
+    mesh.layers.enable(BLOOM_LAYER);
+    mesh.add(halo);
     this.entityRoot.add(mesh);
+    this.spawnFlash(muzzleWorld, preset.accentColor, isCannon ? 0.9 : 0.6, 0.14);
 
     const dist = muzzleWorld.distanceTo(targetWorld);
     const speed = isCannon ? 17.5 : 21.0;
@@ -1774,6 +1930,7 @@ export class CyberDefenseEngine {
       slowDuration: preset.slowDurationSec,
       ignoresArmor: preset.ignoresArmor,
       sourceTowerId: tower.id,
+      trailAccum: 0,
     });
   }
 
@@ -1812,7 +1969,7 @@ export class CyberDefenseEngine {
       p.age = 0;
       p.life = life * (0.75 + Math.random() * 0.5);
       p.scale = 0.7 + Math.random() * 0.75;
-      p.color.setHex(colorHex);
+      p.color.setHex(colorHex).multiplyScalar(neonBoost(colorHex, 0.7, 1.0, 2.2));
       this.particleMesh.setColorAt(idx, p.color);
     }
     if (this.particleMesh.instanceColor) {
@@ -1935,7 +2092,7 @@ export class CyberDefenseEngine {
       for (const pm of t.rig.phongMaterials) pm.uniforms.uTime.value = this.elapsed;
     }
 
-    this.renderer.render(this.scene, this.activeCamera);
+    this.renderBloomFrame();
 
     this.hudSyncAccum += dt;
     if (this.hudSyncAccum >= 0.14 && this.phase === 'playing') {
@@ -2220,7 +2377,7 @@ export class CyberDefenseEngine {
       if (liveTarget) {
         p.targetPos.set(
           liveTarget.position.x,
-          liveTarget.position.y + (liveTarget.isFlying ? 0.9 : 0.45),
+          liveTarget.position.y + (liveTarget.isFlying ? 1.25 : 0.7),
           liveTarget.position.z
         );
       }
@@ -2231,6 +2388,11 @@ export class CyberDefenseEngine {
       p.mesh.position.copy(p.pos);
       p.mesh.rotation.x += realDt * 8;
       p.mesh.rotation.y += realDt * 6;
+      p.trailAccum += realDt;
+      if (p.trailAccum >= 0.03) {
+        p.trailAccum = 0;
+        this.spawnFlash(p.pos, TOWER_PRESETS[p.type].accentColor, p.type === 'cannon' ? 0.42 : 0.3, 0.2, 0.3);
+      }
 
       if (p.progress >= 1) {
         if (p.aoeRadiusMeters > 0) {
@@ -2242,6 +2404,7 @@ export class CyberDefenseEngine {
             isCryo ? [0.22, 0.74, 0.97, 0.0] : [1.0, 0.25, 0.05, 0.0]
           );
           this.spawnParticles(p.targetPos, isCryo ? 14 : 20, isCryo ? 0x7dd3fc : 0xfb923c, 4.8, 0.52);
+          this.spawnFlash(p.targetPos, isCryo ? 0x7dd3fc : 0xfb923c, isCryo ? 1.6 : 2.4, 0.3);
           if (!isCryo) this.trauma = Math.min(1, this.trauma + 0.14);
           for (const e of this.enemies) {
             if (!e.alive) continue;
@@ -2268,10 +2431,14 @@ export class CyberDefenseEngine {
             );
           }
           this.spawnParticles(p.targetPos, 10, 0x7dd3fc, 2.8, 0.42);
+          this.spawnFlash(p.targetPos, 0x7dd3fc, 1.0, 0.22);
         }
 
         this.entityRoot.remove(p.mesh);
         p.mesh.geometry.dispose();
+        for (const child of p.mesh.children) {
+          if (child instanceof THREE.Sprite) child.material.dispose();
+        }
         this.projectiles.splice(i, 1);
       }
     }
@@ -2300,6 +2467,20 @@ export class CyberDefenseEngine {
         this.entityRoot.remove(r.mesh);
         r.mesh.geometry.dispose();
         this.beamTrails.splice(i, 1);
+      }
+    }
+
+    for (let i = this.flashes.length - 1; i >= 0; i--) {
+      const f = this.flashes[i];
+      f.age += realDt;
+      const frac = Math.min(1, f.age / f.duration);
+      const size = f.startSize + (f.endSize - f.startSize) * (1 - Math.pow(1 - frac, 2));
+      f.sprite.scale.set(size, size, 1);
+      f.mat.opacity = 1 - frac;
+      if (f.age >= f.duration) {
+        this.entityRoot.remove(f.sprite);
+        f.mat.dispose();
+        this.flashes.splice(i, 1);
       }
     }
 

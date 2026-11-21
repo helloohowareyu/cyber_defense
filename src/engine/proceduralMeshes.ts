@@ -132,6 +132,54 @@ export interface TowerRig {
   hitMesh: THREE.Mesh;
 }
 
+// Towers and enemies are drawn larger than their gameplay footprint so they stay readable
+// from the tactical camera. Gameplay distances (range, path, placement) are unaffected.
+export const TOWER_VISUAL_SCALE = 1.2;
+const ENEMY_VISUAL_SCALE = 1.45;
+const BOSS_VISUAL_SCALE = 1.25;
+const FINAL_BOSS_VISUAL_SCALE = 1.12;
+
+// Objects on this layer get the bloom glow (see CyberDefenseEngine.renderBloomFrame)
+export const BLOOM_LAYER = 1;
+
+// Every strongly emissive mesh in a rig (neon strips, lenses, eyes, padlock...) joins the bloom layer
+function tagBloomParts(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const mat = obj.material;
+    if (mat instanceof THREE.MeshStandardMaterial && mat.emissiveIntensity >= 1.5 && mat.emissive.getHex() !== 0) {
+      obj.layers.enable(BLOOM_LAYER);
+    }
+  });
+}
+
+// Pale colors (ice blue) are far brighter than saturated ones (red, violet) at the same intensity.
+// Scaling by luminance gives every neon color a similar glow instead of some blowing out to white.
+export function neonBoost(colorHex: number, targetLuminance: number, min: number, max: number): number {
+  const c = new THREE.Color(colorHex);
+  const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  return Math.min(max, Math.max(min, targetLuminance / Math.max(lum, 0.01)));
+}
+
+// Soft round glow used by additive sprites (muzzle flashes, hit flares, trails)
+export function createGlowTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.25, 'rgba(255,255,255,0.75)');
+  g.addColorStop(0.6, 'rgba(255,255,255,0.18)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 // Small helper: create a mesh, place it, and attach it to a parent in one go.
 function part(
   parent: THREE.Object3D,
@@ -213,10 +261,12 @@ export function buildTowerRig(type: TowerType): TowerRig {
   const matAccent = new THREE.MeshStandardMaterial({
     color: preset.accentColor,
     emissive: preset.accentColor,
-    emissiveIntensity: 1.2,
+    emissiveIntensity: neonBoost(preset.accentColor, 0.85, 1.5, 3.0),
     metalness: 0.3,
     roughness: 0.22,
   });
+  // Base slits stay below the bloom cut-off (1.5) so six towers in a row don't turn into a haze;
+  // only the halo ring above the mount glows
   const matBaseGlow = new THREE.MeshStandardMaterial({
     color: 0x22d3ee,
     emissive: 0x22d3ee,
@@ -263,7 +313,8 @@ export function buildTowerRig(type: TowerType): TowerRig {
   // Floating halo ring above the mounting plate, held by thin light beams.
   // The Farm's wide server vault would swallow it, so the Farm goes without.
   if (type !== 'farm') {
-    part(root, new THREE.TorusGeometry(0.46, 0.018, 8, 40), matBaseGlow, 0, 0.66, 0, Math.PI / 2, 0, 0, false);
+    const matHalo = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.55 });
+    part(root, new THREE.TorusGeometry(0.46, 0.012, 8, 40), matHalo, 0, 0.66, 0, Math.PI / 2, 0, 0, false);
     for (let i = 0; i < 4; i++) {
       const angle = (i * Math.PI) / 2 + Math.PI / 4;
       part(root, new THREE.CylinderGeometry(0.005, 0.005, 0.15, 4), matBaseGlow, Math.sin(angle) * 0.46, 0.585, Math.cos(angle) * 0.46, 0, 0, 0, false);
@@ -318,7 +369,7 @@ export function buildTowerRig(type: TowerType): TowerRig {
     muzzleLocal = new THREE.Vector3(0, 0.2, 0.8);
   } else if (type === 'cannon') {
     // Bulky armored housing, orange heat vents, cyan trim and a heavy segmented barrel
-    const matTrim = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.1 });
+    const matTrim = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 2.0 });
     part(recoilGroup, new THREE.BoxGeometry(0.74, 0.06, 0.66), matHullDark, 0, 0.03, -0.1);
     part(recoilGroup, new THREE.BoxGeometry(0.66, 0.38, 0.6), matHullMid, 0, 0.25, -0.1);
     part(recoilGroup, new THREE.BoxGeometry(0.52, 0.07, 0.46), matHullDark, 0, 0.47, -0.12);
@@ -464,6 +515,9 @@ export function buildTowerRig(type: TowerType): TowerRig {
   hitMesh.position.y = 0.78;
   root.add(hitMesh);
 
+  root.scale.setScalar(TOWER_VISUAL_SCALE);
+  tagBloomParts(root);
+
   return {
     root,
     turretHead,
@@ -518,7 +572,7 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
   const matAccent = new THREE.MeshStandardMaterial({
     color: preset.accentColor,
     emissive: preset.accentColor,
-    emissiveIntensity: 1.15,
+    emissiveIntensity: 2.8,
     metalness: 0.25,
     roughness: 0.2,
   });
@@ -584,7 +638,7 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     hpBarY = 1.15;
   } else if (type === 'worm_swarm') {
     // Zero-Day Worm (concept art: "Worm"): segmented armored body, red stripe, orange side lines
-    const matOrange = new THREE.MeshStandardMaterial({ color: 0xff8a1e, emissive: 0xff8a1e, emissiveIntensity: 1.1 });
+    const matOrange = new THREE.MeshStandardMaterial({ color: 0xff8a1e, emissive: 0xff8a1e, emissiveIntensity: 2.4 });
     const bodyY = 0.3;
     part(bodyGroup, zCylinder(0.1, 0.15, 0.24, 6), matPrimary, 0, bodyY, 0.36);
     part(bodyGroup, new THREE.BoxGeometry(0.1, 0.03, 0.02), matDark, 0, bodyY - 0.03, 0.485, 0, 0, 0, false);
@@ -642,7 +696,7 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
     hpBarY = 1.6;
   } else if (type === 'trojan_brute') {
     // Trojan Juggernaut (concept art: "Trojan"): armored hover war-horse with an open glowing cargo hatch
-    const matCore = new THREE.MeshStandardMaterial({ color: 0xff3b2f, emissive: 0xff1e42, emissiveIntensity: 1.6 });
+    const matCore = new THREE.MeshStandardMaterial({ color: 0xff3b2f, emissive: 0xff1e42, emissiveIntensity: 3.4 });
 
     // Four hover thrusters instead of legs
     for (const sx of [-1, 1]) {
@@ -831,6 +885,9 @@ export function buildEnemyRig(type: EnemyType, shadowTex: THREE.Texture): EnemyR
   );
   hpBarFill.position.set(-barW * 0.5, 0, 0.01);
   hpBarBg.add(hpBarFill);
+
+  root.scale.setScalar(preset.isFinalBoss ? FINAL_BOSS_VISUAL_SCALE : preset.isBoss ? BOSS_VISUAL_SCALE : ENEMY_VISUAL_SCALE);
+  tagBloomParts(root);
 
   return {
     root,

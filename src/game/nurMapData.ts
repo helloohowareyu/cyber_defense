@@ -41,7 +41,7 @@ export const NUR_ROAD_HALF_WIDTH = 0.96; // clean cyber lane
 export const NUR_NEON_HALF_WIDTH = 1.14; // cyan neon border rail
 export const NUR_SLOT_PAD_SIZE = 1.34; // Nur's Overclock Pad footprint
 export const NUR_SLOT_CLEARANCE = 0.5; // Nur's exact 0.5m clearance from neon edge
-export const TOWER_FOOTPRINT_RADIUS = 0.72; // Free-placement tower radius
+export const TOWER_FOOTPRINT_RADIUS = 0.82; // Free-placement tower radius (matches the 1.2x tower visual scale)
 
 // Base coordinates on the expanded 40m x 24m arena
 export const NUR_BASE_MUSUH_POS: Vec3Like = { x: -18.0, y: 0, z: 0 };
