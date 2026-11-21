@@ -29,7 +29,7 @@ export interface NurSlotData {
 
 export interface PlacementValidation {
   valid: boolean;
-  reason: 'ok' | 'out_of_bounds' | 'on_road' | 'near_base' | 'tower_overlap';
+  reason: 'ok' | 'out_of_bounds' | 'on_road' | 'near_base' | 'tower_overlap' | 'locked_overclock_pad';
   snappedPosition: Vec3Like;
   overclockPadId: number | null;
 }
@@ -322,18 +322,27 @@ export const NUR_TOWER_SLOTS = buildNurTowerSlots(NUR_BAKED_PATH);
 export function validateTowerPlacement(
   worldPos: Vec3Like,
   existingTowerPositions: readonly Vec3Like[],
+  unlockedOverclockPadIds: ReadonlySet<number> = new Set(),
   path: NurBakedPath = NUR_BAKED_PATH,
   overclockPads: readonly NurSlotData[] = NUR_TOWER_SLOTS
 ): PlacementValidation {
   let candidate: Vec3Like = { x: worldPos.x, y: 0, z: worldPos.z };
   let overclockPadId: number | null = null;
 
-  // Magnetic snap to nearby unoccupied Overclock Pad (grants +15% Range & +12% Fire Rate!)
+  // Check nearby Overclock Pad: if locked, player must purchase/unlock it first!
   for (const pad of overclockPads) {
     if (distanceXZ(candidate, pad.position) <= 0.98) {
       const padOccupied = existingTowerPositions.some((tp) => distanceXZ(tp, pad.position) < 1.15);
       if (!padOccupied) {
         candidate = { x: pad.position.x, y: 0, z: pad.position.z };
+        if (!unlockedOverclockPadIds.has(pad.id)) {
+          return {
+            valid: false,
+            reason: 'locked_overclock_pad',
+            snappedPosition: candidate,
+            overclockPadId: pad.id,
+          };
+        }
         overclockPadId = pad.id;
       }
       break;

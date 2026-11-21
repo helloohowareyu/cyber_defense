@@ -3,6 +3,7 @@
 import React from 'react';
 import { Home, Play, RotateCcw, ShieldAlert, Trophy } from 'lucide-react';
 import { HudSnapshot } from '../engine/CyberDefenseEngine';
+import { DIFFICULTY_PRESETS } from '../game/constants';
 import { SaveData } from '../game/saveManager';
 
 interface StatusModalsProps {
@@ -26,7 +27,7 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
         <div className="cyber-panel rounded-lg max-w-sm w-full p-6 text-center">
           <h2 className="font-display text-2xl font-bold text-white">Permainan Dijeda</h2>
           <p className="text-xs text-slate-400 mt-1">
-            {hud.stageLabel} · Wave {hud.wave}/{hud.totalWaves} · Gold {hud.gold}G
+            Mode {DIFFICULTY_PRESETS[hud.difficulty].label} · {hud.stageLabel} · Wave {hud.wave}/{hud.totalWaves} · Gold {hud.gold}G
           </p>
 
           <div className="mt-6 flex flex-col gap-2.5">
@@ -107,7 +108,7 @@ export const StatusModals: React.FC<StatusModalsProps> = ({
           </div>
 
           <div className="mt-2.5 text-xs font-mono-tabular text-slate-400">
-            High Score: {Math.max(saveData.highScore, hud.score).toLocaleString()} · Core HP: {hud.coreHp}/
+            Mode: {DIFFICULTY_PRESETS[hud.difficulty].label} · High Score: {Math.max(saveData.highScore, hud.score).toLocaleString()} · Core HP: {hud.coreHp}/
             {hud.maxCoreHp}
           </div>
 

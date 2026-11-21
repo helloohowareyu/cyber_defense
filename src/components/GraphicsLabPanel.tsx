@@ -8,6 +8,7 @@ import { GraphicsLabState } from '../engine/CyberDefenseEngine';
 
 interface GraphicsLabPanelProps {
   graphics: GraphicsLabState;
+  shopOpen: boolean;
   onClose: () => void;
   onSetProjection: (proj: 'perspective' | 'orthographic') => void;
   onSetWireframe: (enabled: boolean) => void;
@@ -25,6 +26,7 @@ const CAMERA_PRESETS: { id: CameraPreset; label: string }[] = [
 
 export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
   graphics,
+  shopOpen,
   onClose,
   onSetProjection,
   onSetWireframe,
@@ -35,7 +37,9 @@ export const GraphicsLabPanel: React.FC<GraphicsLabPanelProps> = ({
   return (
     <aside
       aria-label="Lab Grafika Komputer CIF65116"
-      className="fixed top-20 right-4 z-30 pointer-events-auto cyber-panel rounded-lg w-[300px] p-4 text-xs"
+      className={`fixed top-16 z-30 pointer-events-auto cyber-panel rounded-2xl w-[290px] p-4 text-xs transition-all ${
+        shopOpen ? 'right-[330px]' : 'right-12'
+      }`}
     >
       <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
         <div className="flex items-center gap-2">

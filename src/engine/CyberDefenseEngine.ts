@@ -11,6 +11,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   AOE_GDD_TO_METERS,
   CameraPreset,
+  DIFFICULTY_PRESETS,
+  DifficultyId,
   ENEMY_PRESETS,
   EnemyType,
   GamePhase,
@@ -31,6 +33,8 @@ import {
   calculateUpgradeCost,
   computeTurretYaw,
   distanceXZ,
+  getDifficultyRewardGold,
+  getDifficultyTowerCost,
   getEnemySpeedMps,
   getScaledChainCount,
   getScaledDamage,
@@ -80,13 +84,24 @@ export interface ActiveAbilitySnapshot {
   accentHex: string;
 }
 
+export interface LockedPadSnapshot {
+  padId: number;
+  name: string;
+  unlockCost: number;
+  canAfford: boolean;
+}
+
 export interface SelectedTowerSnapshot {
   id: number;
+  isPinned: boolean;
   overclocked: boolean;
   locationLabel: string;
   type: TowerType;
   displayName: string;
+  role: string;
+  description: string;
   tierName: string;
+  nextTierName: string | null;
   level: number;
   damage: number;
   rangeGdd: number;
@@ -126,6 +141,8 @@ export interface FloatingTextEvent {
 
 export interface HudSnapshot {
   phase: GamePhase;
+  difficulty: DifficultyId;
+  overclockUnlockCost: number;
   gold: number;
   coreHp: number;
   maxCoreHp: number;
@@ -141,6 +158,8 @@ export interface HudSnapshot {
   activeBuildType: TowerType | null;
   selectedTowerId: number | null;
   selectedTower: SelectedTowerSnapshot | null;
+  selectedLockedPad: LockedPadSnapshot | null;
+  unlockedOverclockCount: number;
   abilities: ActiveAbilitySnapshot[];
   bossStatus: { name: string; role: string; hp: number; maxHp: number; isFinalBoss: boolean } | null;
   bannerMessage: string | null;
@@ -302,8 +321,11 @@ export class CyberDefenseEngine {
 
   // Simulation State
   private phase: GamePhase = 'title';
+  private difficulty: DifficultyId = 'normal';
+  private shopOpen = true;
   private gold = STARTING_GOLD;
   private coreHp = STARTING_CORE_HP;
+  private maxCoreHp = STARTING_CORE_HP;
   private wave = 0;
   private waveActive = false;
   private autoStartWave = false;
@@ -313,8 +335,11 @@ export class CyberDefenseEngine {
   private enemiesDefeated = 0;
   private score = 0;
   private timeScale: 1 | 2 | 3 = 1;
-  private activeBuildType: TowerType | null = 'laser';
+  private activeBuildType: TowerType | null = null;
   private selectedTowerId: number | null = null;
+  private hoveredTowerId: number | null = null;
+  private selectedLockedPadId: number | null = null;
+  private unlockedOverclockPads = new Set<number>();
   private bannerMessage: string | null = null;
   private bannerTimer = 0;
 
@@ -328,15 +353,15 @@ export class CyberDefenseEngine {
   private showAllRangeRings = false;
   private cameraPreset: CameraPreset = 'tactical';
 
-  // Camera rig (calibrated for 40x24 expanded arena)
-  private camTarget = new THREE.Vector3(0, 0.4, 0.4);
-  private camTargetGoal = new THREE.Vector3(0, 0.4, 0.4);
+  // Camera rig (calibrated for 40x24 expanded arena so both BaseMusuh & Energy Core clear the Right Tower Shop)
+  private camTarget = new THREE.Vector3(5.4, 0.3, 0.2);
+  private camTargetGoal = new THREE.Vector3(5.4, 0.3, 0.2);
   private camYaw = 0;
   private camYawGoal = 0;
   private camPitch = 0.88;
   private camPitchGoal = 0.88;
-  private camDist = 33.8;
-  private camDistGoal = 33.8;
+  private camDist = 39.0;
+  private camDistGoal = 39.0;
   private trauma = 0;
   private hitstopTimer = 0;
   private defeatDelayTimer = 0;
@@ -667,18 +692,28 @@ export class CyberDefenseEngine {
     this.updatePointerNdc(e.clientX, e.clientY);
     this.raycaster.setFromCamera(this.pointerNdc, this.activeCamera);
 
-    // 1. Check if hovering over an existing tower
+    // 1. Check if hovering over an existing tower -> highlight its range ring & show left inspector!
+    const prevHoveredTowerId = this.hoveredTowerId;
     const towerHitMeshes = this.towers.map((t) => t.rig.hitMesh);
     if (towerHitMeshes.length > 0) {
       const tHits = this.raycaster.intersectObjects(towerHitMeshes, false);
       if (tHits.length > 0) {
+        const hitTowerId = tHits[0].object.userData.towerId as number;
+        this.hoveredTowerId = hitTowerId;
         this.hoverWorldPos = null;
         this.hoverValid = false;
         this.hoverOverclockPadId = null;
         this.renderer.domElement.style.cursor = 'pointer';
         this.refreshPreviewAndSlots();
+        if (prevHoveredTowerId !== hitTowerId && this.selectedTowerId === null) {
+          this.emitHudSnapshot();
+        }
         return;
       }
+    }
+    this.hoveredTowerId = null;
+    if (prevHoveredTowerId !== null && this.selectedTowerId === null) {
+      this.emitHudSnapshot();
     }
 
     // 2. If in build placement mode, raycast Nur's open 40x24 floor plane for Free Placement!
@@ -688,12 +723,18 @@ export class CyberDefenseEngine {
         const pt = fHits[0].point;
         const val = validateTowerPlacement(
           { x: pt.x, y: 0, z: pt.z },
-          this.towers.map((t) => t.position)
+          this.towers.map((t) => t.position),
+          this.unlockedOverclockPads
         );
         this.hoverWorldPos = new THREE.Vector3(val.snappedPosition.x, 0, val.snappedPosition.z);
-        this.hoverValid = val.valid && this.gold >= TOWER_PRESETS[this.activeBuildType].baseCost;
+        this.hoverValid = val.valid && this.gold >= this.getTowerCost(this.activeBuildType);
         this.hoverOverclockPadId = val.overclockPadId;
-        this.renderer.domElement.style.cursor = this.hoverValid ? 'crosshair' : 'not-allowed';
+        this.renderer.domElement.style.cursor =
+          val.reason === 'locked_overclock_pad'
+            ? 'pointer'
+            : this.hoverValid
+            ? 'crosshair'
+            : 'not-allowed';
       } else {
         this.hoverWorldPos = null;
         this.hoverValid = false;
@@ -701,10 +742,15 @@ export class CyberDefenseEngine {
         this.renderer.domElement.style.cursor = 'default';
       }
     } else {
+      // Check if hovering over a locked Overclock Pad so cursor shows clickable pointer
+      const padHitMeshes = this.arena.slots
+        .filter((s) => !this.unlockedOverclockPads.has(s.slotId))
+        .map((s) => s.hitMesh);
+      const pHits = padHitMeshes.length > 0 ? this.raycaster.intersectObjects(padHitMeshes, false) : [];
+      this.hoverOverclockPadId = pHits.length > 0 ? (pHits[0].object.userData.padId as number) : null;
       this.hoverWorldPos = null;
       this.hoverValid = false;
-      this.hoverOverclockPadId = null;
-      this.renderer.domElement.style.cursor = 'default';
+      this.renderer.domElement.style.cursor = pHits.length > 0 ? 'pointer' : 'default';
     }
 
     this.refreshPreviewAndSlots();
@@ -725,13 +771,15 @@ export class CyberDefenseEngine {
     this.updatePointerNdc(e.clientX, e.clientY);
     this.raycaster.setFromCamera(this.pointerNdc, this.activeCamera);
 
-    // 1. Click existing tower to inspect/upgrade/sell/trigger ultimate
+    // 1. Click existing tower to pin/unpin inspector on the Left Sidebar
     const towerHitMeshes = this.towers.map((t) => t.rig.hitMesh);
     if (towerHitMeshes.length > 0) {
       const tHits = this.raycaster.intersectObjects(towerHitMeshes, false);
       if (tHits.length > 0) {
         const clickedTowerId = tHits[0].object.userData.towerId as number;
+        this.selectedLockedPadId = null;
         this.selectedTowerId = this.selectedTowerId === clickedTowerId ? null : clickedTowerId;
+        this.activeBuildType = null;
         audioSynth.playUiClick();
         this.refreshPreviewAndSlots();
         this.emitHudSnapshot();
@@ -739,7 +787,7 @@ export class CyberDefenseEngine {
       }
     }
 
-    // 2. Otherwise, if a tower type is selected for building, freely place it on the floor!
+    // 2. If a tower type is selected for building, freely place it on the floor!
     if (this.activeBuildType) {
       const fHits = this.raycaster.intersectObject(this.arena.floorHitMesh, false);
       if (fHits.length > 0) {
@@ -747,11 +795,29 @@ export class CyberDefenseEngine {
         const placed = this.buildTowerAtWorldPos(pt.x, pt.z, this.activeBuildType);
         if (placed) return;
       }
+    } else {
+      // 3. Clicking a locked Overclock Pad opens its Purchase Inspector on the Left Sidebar!
+      const lockedPadMeshes = this.arena.slots
+        .filter((s) => !this.unlockedOverclockPads.has(s.slotId))
+        .map((s) => s.hitMesh);
+      if (lockedPadMeshes.length > 0) {
+        const pHits = this.raycaster.intersectObjects(lockedPadMeshes, false);
+        if (pHits.length > 0) {
+          const padId = pHits[0].object.userData.padId as number;
+          this.selectedTowerId = null;
+          this.selectedLockedPadId = this.selectedLockedPadId === padId ? null : padId;
+          audioSynth.playUiClick();
+          this.refreshPreviewAndSlots();
+          this.emitHudSnapshot();
+          return;
+        }
+      }
     }
 
-    // 3. Clicking empty invalid area deselects currently selected tower
-    if (this.selectedTowerId !== null) {
+    // 4. Clicking empty area deselects currently pinned tower or locked pad
+    if (this.selectedTowerId !== null || this.selectedLockedPadId !== null) {
       this.selectedTowerId = null;
+      this.selectedLockedPadId = null;
       this.refreshPreviewAndSlots();
       this.emitHudSnapshot();
     }
@@ -771,10 +837,42 @@ export class CyberDefenseEngine {
   // PUBLIC API FOR REACT HUD & CONTROLS
   // =========================================================================
 
-  public startNewGame(): void {
+  private getTowerCost(type: TowerType): number {
+    return getDifficultyTowerCost(TOWER_PRESETS[type].baseCost, this.difficulty);
+  }
+
+  private getOverclockCost(): number {
+    return DIFFICULTY_PRESETS[this.difficulty].overclockUnlockCost;
+  }
+
+  public setDifficulty(diff: DifficultyId): void {
+    this.difficulty = diff;
+    const preset = DIFFICULTY_PRESETS[diff];
+    if (this.phase === 'title') {
+      this.gold = preset.startingGold;
+      this.maxCoreHp = preset.startingCoreHp;
+      this.coreHp = preset.startingCoreHp;
+    }
+    this.emitHudSnapshot();
+  }
+
+  public setShopOpen(open: boolean): void {
+    if (this.shopOpen === open) return;
+    this.shopOpen = open;
+    if (this.phase === 'playing' && (this.cameraPreset === 'tactical' || this.cameraPreset === 'topdown')) {
+      this.setCameraPreset(this.cameraPreset);
+    }
+  }
+
+  public startNewGame(difficulty?: DifficultyId): void {
+    if (difficulty) {
+      this.difficulty = difficulty;
+    }
+    const diffPreset = DIFFICULTY_PRESETS[this.difficulty];
     this.clearEntities();
-    this.gold = STARTING_GOLD;
-    this.coreHp = STARTING_CORE_HP;
+    this.gold = diffPreset.startingGold;
+    this.maxCoreHp = diffPreset.startingCoreHp;
+    this.coreHp = diffPreset.startingCoreHp;
     this.wave = 0;
     this.waveActive = false;
     this.autoStartTimer = 0;
@@ -783,8 +881,11 @@ export class CyberDefenseEngine {
     this.enemiesDefeated = 0;
     this.score = 0;
     this.timeScale = 1;
-    this.activeBuildType = 'laser';
+    this.activeBuildType = null;
     this.selectedTowerId = null;
+    this.hoveredTowerId = null;
+    this.selectedLockedPadId = null;
+    this.unlockedOverclockPads.clear();
     this.hoverWorldPos = null;
     this.hoverValid = false;
     this.hoverOverclockPadId = null;
@@ -797,8 +898,9 @@ export class CyberDefenseEngine {
     this.setCameraPreset('tactical');
     audioSynth.startMusic();
     audioSynth.setMusicMood('idle');
-    this.showBanner('Klik bebas di arena untuk bangun menara · Node Emas (+) beri bonus Overclock!');
-    this.rebuildPreviewRingGeometry(false);
+    this.showBanner(
+      `Mode ${diffPreset.label} · Pilih menara di panel kanan · Klik Node (+) untuk Overclock (${diffPreset.overclockUnlockCost}G)`
+    );
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
   }
@@ -806,7 +908,10 @@ export class CyberDefenseEngine {
   public returnToTitle(): void {
     this.clearEntities();
     this.phase = 'title';
+    this.activeBuildType = null;
     this.selectedTowerId = null;
+    this.hoveredTowerId = null;
+    this.selectedLockedPadId = null;
     this.hoverWorldPos = null;
     this.previewRingMesh.visible = false;
     this.ghostFootprintMesh.visible = false;
@@ -843,11 +948,48 @@ export class CyberDefenseEngine {
     this.activeBuildType = type;
     if (type !== null) {
       this.selectedTowerId = null;
+      this.selectedLockedPadId = null;
     }
     audioSynth.playUiClick();
     this.rebuildPreviewRingGeometry(false);
     this.refreshPreviewAndSlots();
     this.emitHudSnapshot();
+  }
+
+  public selectLockedPad(padId: number | null): void {
+    this.selectedLockedPadId = padId;
+    if (padId !== null) {
+      this.selectedTowerId = null;
+      this.activeBuildType = null;
+    }
+    this.refreshPreviewAndSlots();
+    this.emitHudSnapshot();
+  }
+
+  public unlockOverclockPad(padId: number): boolean {
+    if (this.phase !== 'playing') return false;
+    if (this.unlockedOverclockPads.has(padId)) return false;
+    const slot = NUR_TOWER_SLOTS[padId];
+    if (!slot) return false;
+    const unlockCost = this.getOverclockCost();
+    if (this.gold < unlockCost) {
+      this.showBanner(`Gold tidak cukup! Butuh ${unlockCost}G untuk mengaktifkan Overclock Node ${padId + 1}`);
+      return false;
+    }
+
+    this.gold -= unlockCost;
+    this.unlockedOverclockPads.add(padId);
+    this.selectedLockedPadId = null;
+
+    const pos = new THREE.Vector3(slot.position.x, 0.15, slot.position.z);
+    audioSynth.playBuild(true);
+    this.spawnParticles(pos, 22, 0xfbbf24, 3.8, 0.55);
+    this.spawnShockwave(pos, 2.2, [0.98, 0.75, 0.15, 0.85], [0.98, 0.75, 0.15, 0.0]);
+    this.pushFloatText(`-${unlockCost}G OVERCLOCK AKTIF`, pos, '#fde047');
+    this.showBanner(`Overclock Node ${padId + 1} aktif! Menara di sini mendapat +12% Jangkauan & +12% Kecepatan.`);
+    this.refreshPreviewAndSlots();
+    this.emitHudSnapshot();
+    return true;
   }
 
   public startNextWave(): void {
@@ -889,16 +1031,29 @@ export class CyberDefenseEngine {
   public buildTowerAtWorldPos(worldX: number, worldZ: number, type: TowerType): boolean {
     if (this.phase !== 'playing') return false;
     const preset = TOWER_PRESETS[type];
-    if (this.gold < preset.baseCost) {
-      this.showBanner(`Gold tidak cukup! Butuh ${preset.baseCost}G untuk ${preset.displayName}`);
+    const buildCost = this.getTowerCost(type);
+    if (this.gold < buildCost) {
+      this.showBanner(`Gold tidak cukup! Butuh ${buildCost}G untuk ${preset.displayName}`);
       return false;
     }
 
     const val = validateTowerPlacement(
       { x: worldX, y: 0, z: worldZ },
-      this.towers.map((t) => t.position)
+      this.towers.map((t) => t.position),
+      this.unlockedOverclockPads
     );
     if (!val.valid) {
+      if (val.reason === 'locked_overclock_pad' && val.overclockPadId !== null) {
+        this.selectedLockedPadId = val.overclockPadId;
+        this.selectedTowerId = null;
+        this.activeBuildType = null;
+        this.showBanner(
+          `Overclock Node ${val.overclockPadId + 1} terkunci! Beli di panel kiri (${this.getOverclockCost()}G) terlebih dahulu.`
+        );
+        this.refreshPreviewAndSlots();
+        this.emitHudSnapshot();
+        return false;
+      }
       const msg =
         val.reason === 'on_road'
           ? 'Tidak bisa membangun di atas jalur musuh!'
@@ -913,14 +1068,13 @@ export class CyberDefenseEngine {
 
     const pos = val.snappedPosition;
     const overclocked = val.overclockPadId !== null;
-    this.gold -= preset.baseCost;
+    this.gold -= buildCost;
 
     const rig = buildTowerRig(type);
     const towerId = this.nextTowerId++;
     rig.hitMesh.userData = { towerId };
     rig.root.position.set(pos.x, overclocked ? 0.09 : 0.02, pos.z);
 
-    // Orient newly placed tower to face nearest road point cleanly
     if (overclocked && val.overclockPadId !== null) {
       rig.turretHead.rotation.y = NUR_TOWER_SLOTS[val.overclockPadId].yaw;
     }
@@ -929,13 +1083,13 @@ export class CyberDefenseEngine {
     const rangeMeters = getScaledRangeMeters(preset.baseRangeGdd, 1, overclocked);
     const rgb = new THREE.Color(overclocked ? 0xfbbf24 : preset.accentColor);
     const ringGeo = buildRangeRingGeometry(
-      Math.max(0.6, rangeMeters - 0.35),
+      Math.max(0.5, rangeMeters - 0.28),
       rangeMeters,
       56,
       [rgb.r, rgb.g, rgb.b, 0.14],
       [rgb.r, rgb.g, rgb.b, 0.72]
     );
-    const ringMat = createRangeRingMaterial({ pulseSpeed: 0.9, pulseStrength: 0.22, fade: 1.0 });
+    const ringMat = createRangeRingMaterial({ pulseSpeed: 0.9, pulseStrength: 0.2, fade: 1.0 });
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
     ringMesh.position.set(pos.x, 0.03, pos.z);
     ringMesh.visible = this.showAllRangeRings;
@@ -960,10 +1114,10 @@ export class CyberDefenseEngine {
       overclockPadId: val.overclockPadId,
       type,
       level: 1,
-      totalInvested: preset.baseCost,
+      totalInvested: buildCost,
       targetingMode: type === 'armor_pen' ? 'STRONG' : 'FIRST',
       cooldown: 0.12,
-      farmTimer: preset.incomeCycleSec * 0.65,
+      farmTimer: preset.incomeCycleSec * 0.75,
       recoil: 0,
       kills: 0,
       goldEarned: 0,
@@ -979,11 +1133,15 @@ export class CyberDefenseEngine {
     };
 
     this.towers.push(tower);
-    this.selectedTowerId = towerId;
+    // Do NOT leave range ring or build mode stuck active after placement!
+    this.selectedTowerId = null;
+    this.selectedLockedPadId = null;
+    this.activeBuildType = null;
+    this.hoverWorldPos = null;
     audioSynth.playBuild(overclocked);
     this.spawnParticles(tower.position, overclocked ? 20 : 14, overclocked ? 0xfbbf24 : preset.accentColor, 3.4, 0.48);
     this.pushFloatText(
-      overclocked ? `-${preset.baseCost}G OVERCLOCK!` : `-${preset.baseCost}G`,
+      overclocked ? `-${buildCost}G OVERCLOCK!` : `-${buildCost}G`,
       tower.position,
       overclocked ? '#fde047' : '#fbbf24'
     );
@@ -998,7 +1156,7 @@ export class CyberDefenseEngine {
     if (!tower || tower.level >= MAX_TOWER_LEVEL) return false;
 
     const preset = TOWER_PRESETS[tower.type];
-    const cost = calculateUpgradeCost(preset.baseCost, tower.level);
+    const cost = calculateUpgradeCost(preset.baseCost, tower.level, this.difficulty);
     if (this.gold < cost) {
       this.showBanner(`Gold tidak cukup untuk Upgrade (${cost}G)`);
       return false;
@@ -1162,13 +1320,13 @@ export class CyberDefenseEngine {
       }
       this.showBanner(`ULTIMATE: ${preset.ultimate.name} menyambar ${struck.length} target!`);
     } else if (tower.type === 'farm') {
-      // QUANTUM JACKPOT: Instant +300 Gold surge!
-      const bonus = 300;
+      // QUANTUM JACKPOT: Rebalanced instant +140 Gold surge
+      const bonus = 140;
       this.gold += bonus;
       tower.goldEarned += bonus;
       audioSynth.playFarmIncome();
       this.spawnShockwave(tower.position, 4.0, [0.2, 0.85, 0.6, 0.85], [0.06, 0.72, 0.5, 0.0]);
-      this.spawnParticles(tower.position, 28, 0x34d399, 5.2, 0.65);
+      this.spawnParticles(tower.position, 24, 0x34d399, 5.0, 0.6);
       this.pushFloatText(`+${bonus}G JACKPOT!`, tower.position, '#34d399');
       this.showBanner(`ULTIMATE: Quantum Jackpot mencairkan +${bonus} Gold!`);
     }
@@ -1212,20 +1370,20 @@ export class CyberDefenseEngine {
   public setCameraPreset(preset: CameraPreset): void {
     this.cameraPreset = preset;
     if (preset === 'tactical') {
-      this.camTargetGoal.set(0, 0.4, 0.4);
+      this.camTargetGoal.set(this.shopOpen ? 5.4 : 0.0, 0.3, 0.2);
       this.camYawGoal = 0;
       this.camPitchGoal = 0.88;
-      this.camDistGoal = 33.8;
+      this.camDistGoal = this.shopOpen ? 39.0 : 35.6;
     } else if (preset === 'action') {
       this.camTargetGoal.set(-2.5, 0.6, 0.5);
       this.camYawGoal = -0.3;
       this.camPitchGoal = 0.52;
       this.camDistGoal = 24.0;
     } else if (preset === 'topdown') {
-      this.camTargetGoal.set(0, 0, 0);
+      this.camTargetGoal.set(this.shopOpen ? 4.6 : 0.0, 0, 0);
       this.camYawGoal = 0;
       this.camPitchGoal = 1.48;
-      this.camDistGoal = 36.5;
+      this.camDistGoal = this.shopOpen ? 39.5 : 36.2;
     } else if (preset === 'core') {
       this.camTargetGoal.set(14.5, 1.2, 0);
       this.camYawGoal = -0.68;
@@ -1257,7 +1415,7 @@ export class CyberDefenseEngine {
     if (!this.activeBuildType) return;
     const preset = TOWER_PRESETS[this.activeBuildType];
     const rangeM = getScaledRangeMeters(preset.baseRangeGdd, 1, overclocked);
-    const ok = this.hoverValid || this.gold >= preset.baseCost;
+    const ok = this.hoverValid || this.gold >= this.getTowerCost(this.activeBuildType);
     const rgb = !ok
       ? new THREE.Color(0xff2a4a)
       : overclocked
@@ -1281,29 +1439,46 @@ export class CyberDefenseEngine {
 
     for (const s of this.arena.slots) {
       const occupied = occupiedPads.has(s.slotId);
+      const unlocked = this.unlockedOverclockPads.has(s.slotId);
       const isHoveredPad = this.hoverOverclockPadId === s.slotId;
+      const isSelectedLocked = this.selectedLockedPadId === s.slotId;
 
       if (occupied) {
-        s.plusMat.emissiveIntensity = 0.28;
+        s.plusMat.color.setHex(0xfbbf24);
+        s.plusMat.emissive.setHex(0xf59e0b);
+        s.plusMat.emissiveIntensity = 0.3;
         s.frameMat.color.setHex(0xfbbf24);
         s.frameMat.emissive.setHex(0xd97706);
         s.frameMat.emissiveIntensity = 0.85;
-      } else {
+      } else if (unlocked) {
+        // Purchased / Active Overclock Node: energized amber-gold glow!
         s.plusMat.color.setHex(isHoveredPad ? 0xfef08a : 0xfbbf24);
         s.plusMat.emissive.setHex(isHoveredPad ? 0xfacc15 : 0xf59e0b);
-        s.plusMat.emissiveIntensity = isHoveredPad ? 1.85 : 0.95;
-        s.frameMat.color.setHex(isHoveredPad ? 0xfbbf24 : 0x38bdf8);
-        s.frameMat.emissive.setHex(isHoveredPad ? 0xf59e0b : 0x0284c7);
-        s.frameMat.emissiveIntensity = isHoveredPad ? 1.45 : 0.72;
+        s.plusMat.emissiveIntensity = isHoveredPad ? 1.85 : 1.05;
+        s.frameMat.color.setHex(isHoveredPad ? 0xfef08a : 0xf59e0b);
+        s.frameMat.emissive.setHex(0xd97706);
+        s.frameMat.emissiveIntensity = isHoveredPad ? 1.45 : 0.85;
+      } else {
+        // Locked Overclock Node: muted steel-slate until bought for 120G
+        s.plusMat.color.setHex(isSelectedLocked || isHoveredPad ? 0x94a3b8 : 0x64748b);
+        s.plusMat.emissive.setHex(isSelectedLocked ? 0x38bdf8 : 0x334155);
+        s.plusMat.emissiveIntensity = isSelectedLocked ? 0.95 : isHoveredPad ? 0.65 : 0.25;
+        s.frameMat.color.setHex(isSelectedLocked ? 0x38bdf8 : isHoveredPad ? 0x64748b : 0x334155);
+        s.frameMat.emissive.setHex(isSelectedLocked ? 0x0284c7 : 0x1e293b);
+        s.frameMat.emissiveIntensity = isSelectedLocked ? 0.95 : isHoveredPad ? 0.55 : 0.22;
       }
     }
 
+    // ONLY display a tower's range ring when highlighted (hovered) or selected (or Lab toggle)!
     for (const tower of this.towers) {
-      tower.rangeRingMesh.visible = this.showAllRangeRings || tower.id === this.selectedTowerId;
+      tower.rangeRingMesh.visible =
+        this.showAllRangeRings ||
+        tower.id === this.selectedTowerId ||
+        tower.id === this.hoveredTowerId;
     }
 
     if (this.phase === 'playing' && this.activeBuildType && this.hoverWorldPos) {
-      const oc = this.hoverOverclockPadId !== null;
+      const oc = this.hoverOverclockPadId !== null && this.unlockedOverclockPads.has(this.hoverOverclockPadId);
       this.rebuildPreviewRingGeometry(oc);
       this.previewRingMesh.position.set(this.hoverWorldPos.x, 0.035, this.hoverWorldPos.z);
       this.previewRingMesh.visible = true;
@@ -1365,7 +1540,7 @@ export class CyberDefenseEngine {
 
   private spawnEnemy(type: EnemyType): void {
     const preset = ENEMY_PRESETS[type];
-    const maxHp = calculateEnemyWaveHp(preset.baseHp, this.wave, preset.isBoss);
+    const maxHp = calculateEnemyWaveHp(preset.baseHp, this.wave, preset.isBoss, this.difficulty);
     const rig = buildEnemyRig(type, this.contactShadowTex);
     const startSample = NUR_BAKED_PATH.sampleAtDistance(0);
     rig.root.position.set(startSample.pos.x, 0.12, startSample.pos.z);
@@ -1381,8 +1556,8 @@ export class CyberDefenseEngine {
       currentHp: maxHp,
       maxHp,
       armor: preset.armor,
-      baseSpeed: getEnemySpeedMps(preset.speedGdd),
-      rewardGold: preset.rewardGold,
+      baseSpeed: getEnemySpeedMps(preset.speedGdd, this.difficulty),
+      rewardGold: getDifficultyRewardGold(preset.rewardGold, this.difficulty),
       leakDamage: preset.leakDamage,
       isBoss: preset.isBoss,
       isFinalBoss: preset.isFinalBoss,
@@ -1720,7 +1895,7 @@ export class CyberDefenseEngine {
       this.arena.update(dt, this.elapsed, 1.0);
       this.updateTitleCamera(dt);
     } else if (this.phase === 'playing') {
-      this.arena.update(dt, this.elapsed, this.coreHp / STARTING_CORE_HP);
+      this.arena.update(dt, this.elapsed, this.coreHp / Math.max(1, this.maxCoreHp));
       this.updatePlayerCameraControls(dt);
       this.updateCameraTransform(dt);
 
@@ -2135,7 +2310,7 @@ export class CyberDefenseEngine {
     const aliveCount = this.enemies.filter((e) => e.alive).length;
     if (this.waveActive && this.spawnQueue.length === 0 && aliveCount === 0 && !this.pendingOutcome) {
       this.waveActive = false;
-      const bonus = getWaveClearBonus(this.wave);
+      const bonus = getWaveClearBonus(this.wave, this.difficulty);
 
       // Collect Data Farm end-of-wave dividends!
       let farmDividendTotal = 0;
@@ -2226,9 +2401,11 @@ export class CyberDefenseEngine {
   }
 
   private emitHudSnapshot(): void {
+    const inspectedTowerId = this.selectedTowerId ?? this.hoveredTowerId;
+    const isPinned = this.selectedTowerId !== null;
     const selectedTowerEntity =
-      this.selectedTowerId !== null
-        ? this.towers.find((t) => t.id === this.selectedTowerId) ?? null
+      inspectedTowerId !== null
+        ? this.towers.find((t) => t.id === inspectedTowerId) ?? null
         : null;
 
     let selectedTower: SelectedTowerSnapshot | null = null;
@@ -2237,14 +2414,21 @@ export class CyberDefenseEngine {
       const oc = selectedTowerEntity.overclockPadId !== null;
       selectedTower = {
         id: selectedTowerEntity.id,
+        isPinned,
         overclocked: oc,
         locationLabel:
           selectedTowerEntity.overclockPadId !== null
             ? `Overclock Node ${selectedTowerEntity.overclockPadId + 1}`
-            : 'Penempatan Bebas',
+            : 'Dek Arena Bebas',
         type: selectedTowerEntity.type,
         displayName: preset.displayName,
+        role: preset.role,
+        description: preset.description,
         tierName: preset.tierNames[selectedTowerEntity.level - 1],
+        nextTierName:
+          selectedTowerEntity.level < MAX_TOWER_LEVEL
+            ? preset.tierNames[selectedTowerEntity.level]
+            : null,
         level: selectedTowerEntity.level,
         damage: getScaledDamage(preset.baseDamage, selectedTowerEntity.level),
         rangeGdd: Math.round(getScaledRangeGdd(preset.baseRangeGdd, selectedTowerEntity.level, oc)),
@@ -2261,7 +2445,7 @@ export class CyberDefenseEngine {
         chainCount: getScaledChainCount(preset.chainCount, selectedTowerEntity.level),
         targetingMode: selectedTowerEntity.targetingMode,
         totalInvested: selectedTowerEntity.totalInvested,
-        upgradeCost: calculateUpgradeCost(preset.baseCost, selectedTowerEntity.level),
+        upgradeCost: calculateUpgradeCost(preset.baseCost, selectedTowerEntity.level, this.difficulty),
         sellRefund: calculateSellRefund(selectedTowerEntity.totalInvested),
         kills: selectedTowerEntity.kills,
         goldEarned: selectedTowerEntity.goldEarned,
@@ -2269,6 +2453,17 @@ export class CyberDefenseEngine {
         ultimate: this.buildAbilitySnapshot(selectedTowerEntity),
       };
     }
+
+    const overclockUnlockCost = this.getOverclockCost();
+    const selectedLockedPad: LockedPadSnapshot | null =
+      this.selectedLockedPadId !== null && !this.unlockedOverclockPads.has(this.selectedLockedPadId)
+        ? {
+            padId: this.selectedLockedPadId,
+            name: `Overclock Node ${this.selectedLockedPadId + 1}`,
+            unlockCost: overclockUnlockCost,
+            canAfford: this.gold >= overclockUnlockCost,
+          }
+        : null;
 
     const abilities = this.towers
       .map((t) => this.buildAbilitySnapshot(t))
@@ -2293,9 +2488,11 @@ export class CyberDefenseEngine {
 
     this.onHudUpdate({
       phase: this.phase,
+      difficulty: this.difficulty,
+      overclockUnlockCost,
       gold: this.gold,
       coreHp: this.coreHp,
-      maxCoreHp: STARTING_CORE_HP,
+      maxCoreHp: this.maxCoreHp,
       wave: this.wave,
       totalWaves: TOTAL_WAVES,
       stageLabel: currentDef?.stageLabel ?? 'Stage 1 · Perimeter Scan',
@@ -2308,6 +2505,8 @@ export class CyberDefenseEngine {
       activeBuildType: this.activeBuildType,
       selectedTowerId: this.selectedTowerId,
       selectedTower,
+      selectedLockedPad,
+      unlockedOverclockCount: this.unlockedOverclockPads.size,
       abilities,
       bossStatus,
       bannerMessage: this.bannerMessage,

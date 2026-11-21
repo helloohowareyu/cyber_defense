@@ -14,6 +14,65 @@ export type EnemyType =
 export type TargetingMode = 'FIRST' | 'STRONG' | 'LAST' | 'CLOSE';
 export type GamePhase = 'title' | 'playing' | 'paused' | 'victory' | 'gameover';
 export type CameraPreset = 'tactical' | 'action' | 'topdown' | 'core';
+export type DifficultyId = 'easy' | 'normal' | 'hard';
+
+export interface DifficultyPreset {
+  id: DifficultyId;
+  label: string;
+  shortLabel: string;
+  tagline: string;
+  startingGold: number;
+  startingCoreHp: number;
+  overclockUnlockCost: number;
+  enemyHpMult: number;
+  enemySpeedMult: number;
+  goldRewardMult: number;
+  towerCostMult: number;
+}
+
+export const DIFFICULTY_PRESETS: Record<DifficultyId, DifficultyPreset> = {
+  easy: {
+    id: 'easy',
+    label: 'Mudah',
+    shortLabel: 'Mudah',
+    tagline: 'Modal lebih longgar & musuh lebih lunak untuk eksplorasi strategi.',
+    startingGold: 320,
+    startingCoreHp: 50,
+    overclockUnlockCost: 90,
+    enemyHpMult: 0.8,
+    enemySpeedMult: 0.92,
+    goldRewardMult: 1.15,
+    towerCostMult: 0.9,
+  },
+  normal: {
+    id: 'normal',
+    label: 'Sedang',
+    shortLabel: 'Sedang',
+    tagline: 'Keseimbangan taktis standar dengan ekonomi ketat & boss menantang.',
+    startingGold: 240,
+    startingCoreHp: 35,
+    overclockUnlockCost: 120,
+    enemyHpMult: 1.0,
+    enemySpeedMult: 1.0,
+    goldRewardMult: 1.0,
+    towerCostMult: 1.0,
+  },
+  hard: {
+    id: 'hard',
+    label: 'Sulit',
+    shortLabel: 'Sulit',
+    tagline: 'Gold terbatas, musuh lebih cepat & kuat — ujian pertahanan maksimal.',
+    startingGold: 190,
+    startingCoreHp: 20,
+    overclockUnlockCost: 150,
+    enemyHpMult: 1.28,
+    enemySpeedMult: 1.1,
+    goldRewardMult: 0.9,
+    towerCostMult: 1.12,
+  },
+};
+
+export const DIFFICULTY_ORDER: DifficultyId[] = ['easy', 'normal', 'hard'];
 
 export interface TowerUltimateSpec {
   id: string;
@@ -84,18 +143,19 @@ export interface WaveDefinition {
   entries: WaveEntry[];
 }
 
-export const STARTING_GOLD = 450;
-export const STARTING_CORE_HP = 50;
+export const STARTING_GOLD = DIFFICULTY_PRESETS.normal.startingGold;
+export const STARTING_CORE_HP = DIFFICULTY_PRESETS.normal.startingCoreHp;
 export const TOTAL_WAVES = 15;
 export const MAX_TOWER_LEVEL = 4; // Lv.4 APEX unlocks Active Ultimate!
 
-// Overclock bonus when placing a tower directly on one of Nur's 9 Cyber Overclock Pads
-export const OVERCLOCK_RANGE_MULT = 1.15;
+// Overclock Pads must be purchased (unlocked) with Gold before placing towers on them!
+export const OVERCLOCK_PAD_UNLOCK_COST = DIFFICULTY_PRESETS.normal.overclockUnlockCost;
+export const OVERCLOCK_RANGE_MULT = 1.12;
 export const OVERCLOCK_FIRERATE_MULT = 0.88; // 12% faster cooldown
 
-// Scale calibrated for Nur's expanded 40m x 24m Cyber Arena (path length ~78m)
-export const RANGE_GDD_TO_METERS = 0.052; // 150 -> 7.8m, 140 -> 7.28m, 130 -> 6.76m, 120 -> 6.24m
-export const AOE_GDD_TO_METERS = 0.09; // 38 -> 3.42m blast radius
+// Compact tactical range calibrated so each tower guards ~1 curve rather than half the map
+export const RANGE_GDD_TO_METERS = 0.032; // 150 -> 4.8m, 130 -> 4.16m, 168 -> 5.38m
+export const AOE_GDD_TO_METERS = 0.075; // 38 -> 2.85m blast radius
 export const SPEED_GDD_TO_MPS = 0.036; // Balanced movement across the ~78m multi-switchback track
 
 export const TOWER_PRESETS: Record<TowerType, TowerPreset> = {
@@ -260,19 +320,19 @@ export const TOWER_PRESETS: Record<TowerType, TowerPreset> = {
     displayName: 'Quantum Farm',
     shortName: 'Data Farm',
     role: 'Gold Farming',
-    description: 'Menambang paket data secara berkala selama wave berjalan + dividen Gold di akhir wave.',
+    description: 'Menambang paket Gold bertahap selama wave berjalan + dividen akhir wave. Butuh investasi awal besar.',
     baseDamage: 0,
     baseRangeGdd: 68,
-    fireRateSec: 4.5,
-    baseCost: 160,
+    fireRateSec: 5.8,
+    baseCost: 240,
     aoeRadiusGdd: 0,
     slowRatio: 0,
     slowDurationSec: 0,
     ignoresArmor: false,
     chainCount: 0,
-    incomePerCycle: 28,
-    incomeCycleSec: 4.2,
-    waveDividend: 45,
+    incomePerCycle: 15,
+    incomeCycleSec: 5.8,
+    waveDividend: 22,
     accentHex: '#34D399',
     accentColor: 0x34d399,
     tierNames: ['Data Miner', 'Crypto Cluster', 'Quantum Vault', 'Central Bank Node'],
@@ -280,8 +340,8 @@ export const TOWER_PRESETS: Record<TowerType, TowerPreset> = {
       id: 'quantum_surge',
       name: 'Quantum Jackpot',
       hotkey: 'F',
-      description: 'Mencairkan cadangan data instan sebesar +300 Gold ke kas pertahanan.',
-      cooldownSec: 30,
+      description: 'Mencairkan cadangan data instan sebesar +140 Gold ke kas pertahanan.',
+      cooldownSec: 42,
       durationSec: 1,
     },
   },
@@ -295,10 +355,10 @@ export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
     id: 'bit_crawler',
     displayName: 'Bit-Crawler',
     role: 'Malware Drone',
-    baseHp: 58,
-    speedGdd: 78,
+    baseHp: 68,
+    speedGdd: 80,
     armor: 0,
-    rewardGold: 16,
+    rewardGold: 11,
     leakDamage: 2,
     isBoss: false,
     isFinalBoss: false,
@@ -311,10 +371,10 @@ export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
     id: 'worm_swarm',
     displayName: 'Zero-Day Worm',
     role: 'Micro-Swarm Cepat',
-    baseHp: 38,
-    speedGdd: 108,
+    baseHp: 45,
+    speedGdd: 110,
     armor: 0,
-    rewardGold: 11,
+    rewardGold: 7,
     leakDamage: 1,
     isBoss: false,
     isFinalBoss: false,
@@ -327,10 +387,10 @@ export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
     id: 'packet_wisp',
     displayName: 'Packet Phantom',
     role: 'Hover Interceptor',
-    baseHp: 72,
-    speedGdd: 122,
+    baseHp: 88,
+    speedGdd: 124,
     armor: 2,
-    rewardGold: 22,
+    rewardGold: 15,
     leakDamage: 2,
     isBoss: false,
     isFinalBoss: false,
@@ -343,10 +403,10 @@ export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
     id: 'trojan_brute',
     displayName: 'Trojan Juggernaut',
     role: 'Armored Breach Mech',
-    baseHp: 210,
-    speedGdd: 48,
+    baseHp: 240,
+    speedGdd: 50,
     armor: 8,
-    rewardGold: 32,
+    rewardGold: 25,
     leakDamage: 4,
     isBoss: false,
     isFinalBoss: false,
@@ -359,10 +419,10 @@ export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
     id: 'aegis_dreadnought',
     displayName: 'Firewall Breaker',
     role: 'Mid-Boss Dreadnought',
-    baseHp: 1150,
-    speedGdd: 36,
+    baseHp: 1450,
+    speedGdd: 37,
     armor: 14,
-    rewardGold: 220,
+    rewardGold: 110,
     leakDamage: 12,
     isBoss: true,
     isFinalBoss: false,
@@ -375,11 +435,11 @@ export const ENEMY_PRESETS: Record<EnemyType, EnemyPreset> = {
     id: 'omega_overlord',
     displayName: 'OMEGA-0 Rootkit',
     role: 'FINAL STAGE BOSS',
-    baseHp: 3200,
-    speedGdd: 30,
+    baseHp: 4200,
+    speedGdd: 31,
     armor: 18,
-    rewardGold: 500,
-    leakDamage: 50,
+    rewardGold: 400,
+    leakDamage: 35,
     isBoss: true,
     isFinalBoss: true,
     isFlying: false,

@@ -3,6 +3,8 @@
 // Preserves Yusuf's CombatMath core while expanding to 4 upgrade tiers & farming economy.
 
 import {
+  DIFFICULTY_PRESETS,
+  DifficultyId,
   MAX_TOWER_LEVEL,
   OVERCLOCK_FIRERATE_MULT,
   OVERCLOCK_RANGE_MULT,
@@ -43,6 +45,22 @@ export function isInRange3D(towerPos: Vec3Like, enemyPos: Vec3Like, rangeMeters:
 }
 
 /**
+ * Tower purchase cost adjusted by selected difficulty (rounded to clean multiples of 5G).
+ */
+export function getDifficultyTowerCost(baseCost: number, difficulty: DifficultyId = 'normal'): number {
+  const mult = DIFFICULTY_PRESETS[difficulty].towerCostMult;
+  return Math.max(5, Math.round((Math.max(0, baseCost) * mult) / 5) * 5);
+}
+
+/**
+ * Enemy kill reward Gold adjusted by selected difficulty.
+ */
+export function getDifficultyRewardGold(baseReward: number, difficulty: DifficultyId = 'normal'): number {
+  const mult = DIFFICULTY_PRESETS[difficulty].goldRewardMult;
+  return Math.max(1, Math.round(Math.max(1, baseReward) * mult));
+}
+
+/**
  * Tower damage scaling per level (Lv.1..4):
  * Lv.1 = 1.0x, Lv.2 = 1.35x, Lv.3 = 1.80x, Lv.4 APEX = 2.45x
  */
@@ -63,11 +81,11 @@ export function getScaledFireRate(baseFireRateSec: number, level: number, overcl
 }
 
 /**
- * Tower range in GDD units per level: +10% per level + optional +15% Overclock Pad synergy.
+ * Tower range in GDD units per level: +8% per level + optional +12% Overclock Pad synergy.
  */
 export function getScaledRangeGdd(baseRangeGdd: number, level: number, overclocked = false): number {
   const clamped = Math.max(1, Math.min(MAX_TOWER_LEVEL, Math.floor(level)));
-  return Math.max(0, baseRangeGdd) * (1 + 0.1 * (clamped - 1)) * (overclocked ? OVERCLOCK_RANGE_MULT : 1.0);
+  return Math.max(0, baseRangeGdd) * (1 + 0.08 * (clamped - 1)) * (overclocked ? OVERCLOCK_RANGE_MULT : 1.0);
 }
 
 /**
@@ -78,12 +96,12 @@ export function getScaledRangeMeters(baseRangeGdd: number, level: number, overcl
 }
 
 /**
- * Quantum Data Farm Gold packet scaling per level (BTD6 Banana Farm progression).
+ * Quantum Data Farm Gold packet scaling per level (rebalanced so farming requires real trade-offs).
  */
 export function getScaledFarmPacket(baseIncome: number, level: number, overclocked = false): number {
   const clamped = Math.max(1, Math.min(MAX_TOWER_LEVEL, Math.floor(level)));
-  const mults = [1.0, 1.65, 2.75, 4.4];
-  return Math.round(baseIncome * mults[clamped - 1] * (overclocked ? 1.15 : 1.0));
+  const mults = [1.0, 1.45, 2.1, 3.0];
+  return Math.round(baseIncome * mults[clamped - 1] * (overclocked ? 1.12 : 1.0));
 }
 
 /**
@@ -91,8 +109,8 @@ export function getScaledFarmPacket(baseIncome: number, level: number, overclock
  */
 export function getScaledFarmDividend(baseDividend: number, level: number, overclocked = false): number {
   const clamped = Math.max(1, Math.min(MAX_TOWER_LEVEL, Math.floor(level)));
-  const mults = [1.0, 1.6, 2.5, 4.0];
-  return Math.round(baseDividend * mults[clamped - 1] * (overclocked ? 1.15 : 1.0));
+  const mults = [1.0, 1.4, 2.0, 2.8];
+  return Math.round(baseDividend * mults[clamped - 1] * (overclocked ? 1.12 : 1.0));
 }
 
 /**
@@ -105,10 +123,11 @@ export function getScaledChainCount(baseChains: number, level: number): number {
 }
 
 /**
- * Enemy movement speed in 3D World meters/sec.
+ * Enemy movement speed in 3D World meters/sec (scaled by difficulty).
  */
-export function getEnemySpeedMps(speedGdd: number): number {
-  return Math.max(0.35, speedGdd * SPEED_GDD_TO_MPS);
+export function getEnemySpeedMps(speedGdd: number, difficulty: DifficultyId = 'normal'): number {
+  const mult = DIFFICULTY_PRESETS[difficulty].enemySpeedMult;
+  return Math.max(0.35, speedGdd * SPEED_GDD_TO_MPS * mult);
 }
 
 /**
@@ -125,44 +144,55 @@ export function calculateFinalDamage(
 }
 
 /**
- * Smooth 15-wave HP curve so early waves feel fun & accessible while late waves reward farming & Lv.4 Ultimates.
- * Bosses use a calibrated gentler multiplier so Wave 10 & Wave 15 feel challenging yet fair.
+ * Smooth 15-wave HP curve scaled by selected difficulty (Mudah / Sedang / Sulit).
  */
-export function calculateEnemyWaveHp(baseHp: number, waveNumber: number, isBoss = false): number {
+export function calculateEnemyWaveHp(
+  baseHp: number,
+  waveNumber: number,
+  isBoss = false,
+  difficulty: DifficultyId = 'normal'
+): number {
   const safeWave = Math.max(1, Math.floor(waveNumber));
+  const diffMult = DIFFICULTY_PRESETS[difficulty].enemyHpMult;
   if (isBoss) {
     // Boss baseHp is already tuned for its stage (Wave 10 / 13 / 15)
     const bossScale = safeWave >= 15 ? 1.0 : safeWave >= 13 ? 1.18 : 1.0;
-    return Math.ceil(Math.max(1, baseHp) * bossScale);
+    return Math.ceil(Math.max(1, baseHp) * bossScale * diffMult);
   }
   // Gentle 1.105^(N-1) growth across 15 waves (Wave 1=1.0x, Wave 5=1.49x, Wave 10=2.45x, Wave 15=4.04x)
   const multiplier = Math.pow(1.105, safeWave - 1);
-  return Math.ceil(Math.max(1, baseHp) * multiplier);
+  return Math.ceil(Math.max(1, baseHp) * multiplier * diffMult);
 }
 
 /**
- * Upgrade cost for Lv.1->2, Lv.2->3, Lv.3->4 (returns 0 at MAX level 4).
+ * Upgrade cost for Lv.1->2, Lv.2->3, Lv.3->4 (returns 0 at MAX level 4), scaled by difficulty.
  */
-export function calculateUpgradeCost(baseCost: number, currentLevel: number): number {
+export function calculateUpgradeCost(
+  baseCost: number,
+  currentLevel: number,
+  difficulty: DifficultyId = 'normal'
+): number {
   if (currentLevel >= MAX_TOWER_LEVEL) return 0;
   const safeLevel = Math.max(1, Math.floor(currentLevel));
-  const mults = [0.95, 1.55, 2.45]; // Affordable early Mk.II, meaningful Apex Ultimate investment
-  return Math.round(Math.max(0, baseCost) * mults[safeLevel - 1]);
+  const mults = [1.05, 1.7, 2.7]; // Meaningful progression to Apex Ultimate
+  const diffMult = DIFFICULTY_PRESETS[difficulty].towerCostMult;
+  return Math.round((Math.max(0, baseCost) * mults[safeLevel - 1] * diffMult) / 5) * 5;
 }
 
 /**
- * Sell refund: floor(totalInvested * 0.75) (generous BTD6-style tactical pivoting).
+ * Sell refund: floor(totalInvested * 0.70) (BTD6 standard).
  */
 export function calculateSellRefund(totalInvested: number): number {
-  return Math.floor(Math.max(0, totalInvested) * 0.75);
+  return Math.floor(Math.max(0, totalInvested) * 0.7);
 }
 
 /**
- * Wave completion bonus Gold: 75 + wave * 18.
+ * Wave completion bonus Gold: (42 + wave * 12) * difficulty reward multiplier.
  */
-export function getWaveClearBonus(waveNumber: number): number {
+export function getWaveClearBonus(waveNumber: number, difficulty: DifficultyId = 'normal'): number {
   const safeWave = Math.max(1, Math.floor(waveNumber));
-  return 75 + safeWave * 18;
+  const mult = DIFFICULTY_PRESETS[difficulty].goldRewardMult;
+  return Math.round((42 + safeWave * 12) * mult);
 }
 
 /**

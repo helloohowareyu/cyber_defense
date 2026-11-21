@@ -20,6 +20,7 @@ import { createCircuitDeckTextures, createRoadChevronMaterial } from './shaders'
 export interface NurSlotVisual {
   slotId: number;
   group: THREE.Group;
+  hitMesh: THREE.Mesh;
   plusMat: THREE.MeshStandardMaterial;
   frameMat: THREE.MeshStandardMaterial;
   padMat: THREE.MeshStandardMaterial;
@@ -631,21 +632,21 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     root.add(group);
 
     const padMat = new THREE.MeshStandardMaterial({
-      color: 0x101c31,
-      metalness: 0.8,
-      roughness: 0.32,
+      color: 0x0e172a,
+      metalness: 0.78,
+      roughness: 0.36,
     });
     const plusMat = new THREE.MeshStandardMaterial({
-      color: 0xfbbf24, // Gold-cyan tactical Overclock Node cue!
-      emissive: 0xf59e0b,
-      emissiveIntensity: 0.95,
-      roughness: 0.24,
+      color: 0x64748b, // Locked state by default — turns glowing amber-gold once purchased!
+      emissive: 0x334155,
+      emissiveIntensity: 0.35,
+      roughness: 0.35,
     });
     const frameMat = new THREE.MeshStandardMaterial({
-      color: 0x38bdf8,
-      emissive: 0x0284c7,
-      emissiveIntensity: 0.72,
-      roughness: 0.28,
+      color: 0x475569,
+      emissive: 0x1e293b,
+      emissiveIntensity: 0.3,
+      roughness: 0.35,
     });
 
     addBox(group, [s.padSize, 0.09, s.padSize], [0, 0.045, 0], padMat, false, true);
@@ -660,9 +661,19 @@ export function buildNurArena(maxAnisotropy: number): NurArenaHandles {
     addBox(group, [0.42, 0.036, 0.08], [0, 0.1, 0], plusMat, false, false);
     addBox(group, [0.08, 0.036, 0.42], [0, 0.1, 0], plusMat, false, false);
 
+    // Invisible click collider for selecting/purchasing locked Overclock Pads
+    const hitMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(s.padSize * 1.15, 0.36, s.padSize * 1.15),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    hitMesh.position.set(0, 0.18, 0);
+    hitMesh.userData = { padId: s.id };
+    group.add(hitMesh);
+
     slots.push({
       slotId: s.id,
       group,
+      hitMesh,
       plusMat,
       frameMat,
       padMat,

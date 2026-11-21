@@ -8,7 +8,13 @@ import {
   FloatingTextEvent,
   HudSnapshot,
 } from './engine/CyberDefenseEngine';
-import { STARTING_CORE_HP, STARTING_GOLD, TOTAL_WAVES } from './game/constants';
+import {
+  DifficultyId,
+  OVERCLOCK_PAD_UNLOCK_COST,
+  STARTING_CORE_HP,
+  STARTING_GOLD,
+  TOTAL_WAVES,
+} from './game/constants';
 import { audioSynth } from './game/audioSynth';
 import { loadSaveData, persistSaveData, recordMatchResult, SaveData } from './game/saveManager';
 import { TitleScreen } from './components/TitleScreen';
@@ -18,6 +24,8 @@ import { StatusModals } from './components/StatusModals';
 
 const INITIAL_HUD: HudSnapshot = {
   phase: 'title',
+  difficulty: 'normal',
+  overclockUnlockCost: OVERCLOCK_PAD_UNLOCK_COST,
   gold: STARTING_GOLD,
   coreHp: STARTING_CORE_HP,
   maxCoreHp: STARTING_CORE_HP,
@@ -30,9 +38,11 @@ const INITIAL_HUD: HudSnapshot = {
   enemiesDefeated: 0,
   score: 0,
   timeScale: 1,
-  activeBuildType: 'laser',
+  activeBuildType: null,
   selectedTowerId: null,
   selectedTower: null,
+  selectedLockedPad: null,
+  unlockedOverclockCount: 0,
   abilities: [],
   bossStatus: null,
   bannerMessage: null,
@@ -58,9 +68,13 @@ export default function App() {
     audioSynth.configure(loaded.volume, loaded.muted, loaded.musicMuted);
     return loaded;
   });
-  const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyId>('normal');
+  const [shopCollapsed, setShopCollapsed] = useState(false);
   const [graphicsLabOpen, setGraphicsLabOpen] = useState(false);
   const [floatTexts, setFloatTexts] = useState<FloatingTextEvent[]>([]);
+
+  const difficultyRef = useRef<DifficultyId>(difficulty);
+  difficultyRef.current = difficulty;
 
   const saveRef = useRef(saveData);
   saveRef.current = saveData;
@@ -110,9 +124,18 @@ export default function App() {
     engineRef.current = engine;
 
     const params = new URLSearchParams(window.location.search);
+    const diffParam = params.get('difficulty');
+    const resolvedDiff: DifficultyId =
+      diffParam === 'easy' || diffParam === 'normal' || diffParam === 'hard'
+        ? diffParam
+        : difficultyRef.current;
+    if (resolvedDiff !== difficultyRef.current) {
+      setDifficulty(resolvedDiff);
+      engine.setDifficulty(resolvedDiff);
+    }
     if (params.get('autostart') === '1') {
       document.body.dataset.state = 'playing';
-      engine.startNewGame();
+      engine.startNewGame(resolvedDiff);
     }
 
     return () => {
@@ -120,6 +143,17 @@ export default function App() {
       engineRef.current = null;
     };
   }, [handleHudUpdate, handleFloatText, handleMatchEnd]);
+
+  // Sync camera centering whenever the Tower Shop is opened or closed
+  useEffect(() => {
+    engineRef.current?.setShopOpen(!shopCollapsed);
+  }, [shopCollapsed]);
+
+  const handleSelectDifficulty = useCallback((diff: DifficultyId) => {
+    audioSynth.playUiClick();
+    setDifficulty(diff);
+    engineRef.current?.setDifficulty(diff);
+  }, []);
 
   const handleUpdateAudio = useCallback((volume: number, muted: boolean, musicMuted: boolean) => {
     audioSynth.configure(volume, muted, musicMuted);
@@ -134,10 +168,10 @@ export default function App() {
       document.activeElement.blur();
     }
     audioSynth.playUiClick();
-    engineRef.current?.startNewGame();
+    engineRef.current?.startNewGame(difficultyRef.current);
   }, []);
 
-  // Global keyboard shortcuts (Title Enter/Space, Pause P/Esc, Graphics Lab G, Hide Dock H, SFX M, Music N)
+  // Global keyboard shortcuts (Title Enter/Space, Pause P/Esc, Graphics Lab G, Hide Shop H, SFX M, Music N)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -164,11 +198,12 @@ export default function App() {
       if (key === 'escape') {
         if (phase === 'playing') {
           e.preventDefault();
-          // First cancel active build ghost or selected tower; second Escape pauses the game
           if (snap.activeBuildType !== null) {
             engineRef.current?.setActiveBuildType(null);
           } else if (snap.selectedTowerId !== null) {
             engineRef.current?.selectTower(null);
+          } else if (snap.selectedLockedPad !== null) {
+            engineRef.current?.selectLockedPad(null);
           } else {
             engineRef.current?.setPaused(true);
           }
@@ -183,7 +218,7 @@ export default function App() {
         if (key === 'g') {
           setGraphicsLabOpen((v) => !v);
         } else if (key === 'h') {
-          setDockCollapsed((v) => !v);
+          setShopCollapsed((v) => !v);
         } else if (key === 'm') {
           handleUpdateAudio(saveRef.current.volume, !saveRef.current.muted, saveRef.current.musicMuted);
         } else if (key === 'n') {
@@ -228,6 +263,8 @@ export default function App() {
       {hud.phase === 'title' && (
         <TitleScreen
           saveData={saveData}
+          difficulty={difficulty}
+          onSelectDifficulty={handleSelectDifficulty}
           onStart={handleStartGame}
           onUpdateAudio={handleUpdateAudio}
         />
@@ -239,9 +276,9 @@ export default function App() {
           hud={hud}
           muted={saveData.muted}
           musicMuted={saveData.musicMuted}
-          dockCollapsed={dockCollapsed}
+          shopCollapsed={shopCollapsed}
           graphicsLabOpen={graphicsLabOpen}
-          onToggleDock={() => setDockCollapsed((v) => !v)}
+          onToggleShop={() => setShopCollapsed((v) => !v)}
           onToggleGraphicsLab={() => setGraphicsLabOpen((v) => !v)}
           onToggleMute={() => handleUpdateAudio(saveData.volume, !saveData.muted, saveData.musicMuted)}
           onToggleMusic={() => handleUpdateAudio(saveData.volume, saveData.muted, !saveData.musicMuted)}
@@ -254,6 +291,8 @@ export default function App() {
           onSellTower={() => engineRef.current?.sellSelectedTower()}
           onSetTargeting={(m) => engineRef.current?.setSelectedTowerTargeting(m)}
           onTriggerUltimate={(id) => engineRef.current?.triggerTowerUltimate(id)}
+          onUnlockOverclockPad={(padId) => engineRef.current?.unlockOverclockPad(padId)}
+          onCloseLockedPad={() => engineRef.current?.selectLockedPad(null)}
           onDeselectTower={() => engineRef.current?.selectTower(null)}
         />
       )}
@@ -262,6 +301,7 @@ export default function App() {
       {hud.phase === 'playing' && graphicsLabOpen && (
         <GraphicsLabPanel
           graphics={hud.graphics}
+          shopOpen={!shopCollapsed}
           onClose={() => setGraphicsLabOpen(false)}
           onSetProjection={(p) => engineRef.current?.setProjection(p)}
           onSetWireframe={(w) => engineRef.current?.setWireframe(w)}

@@ -2,22 +2,36 @@
 
 import React, { useState } from 'react';
 import { BookOpen, Music, Play, Settings, Volume2, VolumeX, X } from 'lucide-react';
-import { ENEMY_PRESETS, TOTAL_WAVES, TOWER_ORDER, TOWER_PRESETS } from '../game/constants';
+import {
+  DIFFICULTY_ORDER,
+  DIFFICULTY_PRESETS,
+  DifficultyId,
+  ENEMY_PRESETS,
+  TOTAL_WAVES,
+  TOWER_ORDER,
+  TOWER_PRESETS,
+} from '../game/constants';
+import { getDifficultyTowerCost } from '../game/combatMath';
 import { SaveData } from '../game/saveManager';
 import { CyberDefenseEmblem, TowerSilhouetteIcon } from './GameIcons';
 
 interface TitleScreenProps {
   saveData: SaveData;
+  difficulty: DifficultyId;
+  onSelectDifficulty: (diff: DifficultyId) => void;
   onStart: () => void;
   onUpdateAudio: (volume: number, muted: boolean, musicMuted: boolean) => void;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
   saveData,
+  difficulty,
+  onSelectDifficulty,
   onStart,
   onUpdateAudio,
 }) => {
   const [modal, setModal] = useState<'none' | 'howto' | 'settings'>('none');
+  const activeDiff = DIFFICULTY_PRESETS[difficulty];
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-6 md:p-10">
@@ -62,8 +76,54 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
 
+        {/* 3 Difficulty Modes Selector: Mudah / Sedang / Sulit */}
+        <div className="mt-6 max-w-sm">
+          <div className="text-[11px] font-medium text-slate-300 mb-2">Tingkat Kesulitan</div>
+          <div
+            role="radiogroup"
+            aria-label="Pilih tingkat kesulitan"
+            className="grid grid-cols-3 gap-1.5 p-1 cyber-panel rounded-xl"
+          >
+            {DIFFICULTY_ORDER.map((id) => {
+              const preset = DIFFICULTY_PRESETS[id];
+              const selected = difficulty === id;
+              const activeClass =
+                id === 'easy'
+                  ? 'bg-emerald-400 text-slate-950 font-bold'
+                  : id === 'normal'
+                  ? 'bg-sky-400 text-slate-950 font-bold'
+                  : 'bg-rose-500 text-white font-bold';
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-testid={`difficulty-${id}`}
+                  onClick={() => onSelectDifficulty(id)}
+                  className={`py-2 px-3 rounded-lg text-xs font-display tracking-wide transition-colors cursor-pointer ${
+                    selected ? activeClass : 'text-slate-300 hover:text-white hover:bg-white/5 font-medium'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-mono-tabular text-slate-300">
+            <span className="text-amber-300">{activeDiff.startingGold}G</span>
+            <span className="text-slate-600">·</span>
+            <span className="text-sky-300">{activeDiff.startingCoreHp} HP Core</span>
+            <span className="text-slate-600">·</span>
+            <span>HP Musuh {Math.round(activeDiff.enemyHpMult * 100)}%</span>
+            <span className="text-slate-600">·</span>
+            <span>Overclock {activeDiff.overclockUnlockCost}G</span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1 leading-snug">{activeDiff.tagline}</p>
+        </div>
+
         {/* 3 Primary Menu Actions */}
-        <div className="mt-7 flex flex-col gap-3 max-w-xs">
+        <div className="mt-5 flex flex-col gap-3 max-w-sm">
           <button
             type="button"
             data-start="true"
@@ -71,7 +131,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="cyber-cut flex items-center justify-center gap-2.5 px-6 py-3.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-display font-bold text-base tracking-wide transition-transform active:scale-[0.98] cursor-pointer whitespace-nowrap"
           >
             <Play className="w-5 h-5 fill-current" />
-            <span>Mulai Permainan</span>
+            <span>Mulai Permainan ({activeDiff.label})</span>
           </button>
 
           <div className="grid grid-cols-2 gap-2.5">
@@ -110,7 +170,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       {/* Bottom Flat Control Hint Line */}
       <div className="relative z-10 text-xs text-slate-400 font-mono-tabular hud-text-shadow">
-        1-6 Pilih Menara · Klik Bebas di Arena (Pad + = Overclock) · Q/E/R/T/Y/F Ultimate Lv.4 · WASD / Klik-Kanan Kamera · G Lab Grafika
+        Toko Menara (Kanan · H Tutup/Buka) · Inspektor Menara (Kiri) · Klik Pad + Beli Overclock ({activeDiff.overclockUnlockCost}G) · WASD Kamera · G Lab Grafika
       </div>
 
       {/* How to Play Modal */}
@@ -131,40 +191,44 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
             <div className="mt-4 space-y-5 text-sm text-slate-300">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-slate-900/80 border border-slate-800 rounded-md p-3.5">
-                  <h3 className="text-cyan-300 font-semibold mb-1">Penempatan Bebas & Overclock Node</h3>
+                <div className="bg-slate-900/80 border border-white/10 rounded-xl p-3.5">
+                  <h3 className="text-sky-300 font-semibold mb-1">Penempatan Bebas & Beli Overclock</h3>
                   <p className="text-xs leading-relaxed text-slate-300">
-                    Pilih menara (<span className="font-mono-tabular text-white">1–6</span>) lalu klik area
-                    kosong mana saja di dek arena! Letakkan di atas <strong className="text-amber-300">9 Pad + bercahaya</strong> untuk
-                    bonus <strong className="text-white">+15% Jangkauan & +12% Kecepatan Tembak</strong>.
+                    Pilih menara di <strong className="text-white">Toko Menara (kanan)</strong> — dapat ditutup/dibuka
+                    lewat tombol × atau tombol H — lalu klik area dek kosong. Sembilan{' '}
+                    <strong className="text-amber-300">Pad + Overclock</strong> awalnya terkunci — klik pad dan beli
+                    seharga <strong className="text-white">{activeDiff.overclockUnlockCost}G</strong> untuk bonus +12% Jangkauan &amp; +12% Kecepatan Tembak!
                   </p>
                 </div>
-                <div className="bg-slate-900/80 border border-slate-800 rounded-md p-3.5">
-                  <h3 className="text-amber-300 font-semibold mb-1">Farming, 4-Tier Upgrade & Ultimate</h3>
+                <div className="bg-slate-900/80 border border-white/10 rounded-xl p-3.5">
+                  <h3 className="text-amber-300 font-semibold mb-1">Ekonomi Taktis &amp; Ultimate Lv.4</h3>
                   <p className="text-xs leading-relaxed text-slate-300">
-                    Bangun <strong className="text-emerald-300">Quantum Data Farm</strong> di awal untuk panen Gold rutin
-                    tiap siklus & dividen wave. Upgrade menara hingga <strong className="text-amber-300">Lv.4 APEX</strong> untuk
-                    membuka <strong className="text-white">Active Ultimate</strong> (<span className="font-mono-tabular">Q/E/R/T/Y/F</span>)!
+                    Arahkan kursor atau klik menara terpasang untuk melihat detail, jangkauan, &amp; upgrade di{' '}
+                    <strong className="text-white">panel kiri</strong>. Upgrade ke <strong className="text-amber-300">Lv.4 APEX</strong> untuk
+                    membuka <strong className="text-white">Active Ultimate</strong> (<span className="font-mono-tabular">Q/E/R/T/Y/F</span>).
                   </p>
                 </div>
               </div>
 
               <div>
-                <h3 className="text-cyan-300 font-semibold mb-2">6 Menara Pertahanan Siber & Ultimate Lv.4</h3>
+                <h3 className="text-sky-300 font-semibold mb-2">
+                  6 Unit Pertahanan Siber &amp; Ultimate Lv.4 (Mode {activeDiff.label})
+                </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {TOWER_ORDER.map((id) => {
                     const t = TOWER_PRESETS[id];
+                    const cost = getDifficultyTowerCost(t.baseCost, difficulty);
                     return (
-                      <div key={id} className="bg-slate-900/80 border border-slate-800 rounded-md p-3 flex gap-3">
-                        <TowerSilhouetteIcon type={id} className="w-8 h-8 shrink-0 mt-0.5" />
+                      <div key={id} className="bg-slate-900/80 border border-white/10 rounded-xl p-3 flex gap-3">
+                        <TowerSilhouetteIcon type={id} className="w-10 h-10 shrink-0 mt-0.5" />
                         <div className="min-w-0">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold text-white">[{t.keyHint}] {t.displayName}</span>
-                            <span className="font-mono-tabular text-amber-300 text-xs">{t.baseCost}G</span>
+                            <span className="font-semibold text-white">{t.displayName}</span>
+                            <span className="font-mono-tabular text-amber-300 text-xs">{cost}G</span>
                           </div>
                           <div className="text-xs text-slate-400 mt-0.5">{t.description}</div>
                           <div className="text-[11px] font-mono-tabular text-amber-300/90 mt-1">
-                            ULT [{t.ultimate.hotkey}]: {t.ultimate.name}
+                            Ultimate ({t.ultimate.hotkey}): {t.ultimate.name}
                           </div>
                         </div>
                       </div>

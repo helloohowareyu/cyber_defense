@@ -6,6 +6,7 @@ import {
   getScaledDamage,
   getScaledFireRate,
   getScaledRangeGdd,
+  getScaledRangeMeters,
   getScaledFarmPacket,
   getScaledFarmDividend,
   getScaledChainCount,
@@ -29,6 +30,8 @@ import {
   getWaveComposition,
   getWaveDefinition,
   MAX_TOWER_LEVEL,
+  OVERCLOCK_PAD_UNLOCK_COST,
+  STARTING_GOLD,
   TOTAL_WAVES,
   TOWER_ORDER,
   TOWER_PRESETS,
@@ -40,7 +43,7 @@ test('3D Euclidean distance and range check', () => {
   assert.equal(isInRange3D({ x: 0, y: 0, z: 0 }, { x: 3, y: 4, z: 0 }, 4.99), false);
 });
 
-test('BTD6 4-Tier tower scaling + Overclock Pad synergy (+15% Range, -12% Cooldown)', () => {
+test('Tighter 4-Tier tower scaling + compact tactical range + Overclock Pad synergy (+12% RNG, -12% CD)', () => {
   assert.equal(MAX_TOWER_LEVEL, 4);
   assert.equal(getScaledDamage(16, 1), 16);
   assert.equal(getScaledDamage(16, 4), 39.2);
@@ -48,18 +51,24 @@ test('BTD6 4-Tier tower scaling + Overclock Pad synergy (+15% Range, -12% Cooldo
 
   const baseRange = getScaledRangeGdd(150, 1, false);
   const overclockRange = getScaledRangeGdd(150, 1, true);
-  assert.ok(Math.abs(overclockRange - baseRange * 1.15) < 1e-6);
+  assert.ok(Math.abs(overclockRange - baseRange * 1.12) < 1e-6);
+
+  // Compact tactical range check: Lv.1 Laser should cover ~4.8m, not half the map!
+  const laserMeters = getScaledRangeMeters(150, 1, false);
+  assert.ok(laserMeters >= 4.2 && laserMeters <= 5.2, `Expected compact laser range ~4.8m, got ${laserMeters}`);
 
   const normalRate = getScaledFireRate(1.0, 1, false);
   const ocRate = getScaledFireRate(1.0, 1, true);
   assert.ok(ocRate < normalRate);
 });
 
-test('Quantum Data Farm & Tesla Arc Relay scaling formulas', () => {
-  assert.equal(getScaledFarmPacket(28, 1, false), 28);
-  assert.ok(getScaledFarmPacket(28, 4, false) > 100);
-  assert.ok(getScaledFarmPacket(28, 4, true) > getScaledFarmPacket(28, 4, false));
-  assert.ok(getScaledFarmDividend(45, 4, false) >= 180);
+test('Rebalanced Quantum Data Farm & Tesla Arc Relay scaling formulas', () => {
+  assert.equal(TOWER_PRESETS.farm.baseCost, 240);
+  assert.equal(getScaledFarmPacket(15, 1, false), 15);
+  assert.equal(getScaledFarmPacket(15, 4, false), 45);
+  assert.ok(getScaledFarmPacket(15, 4, true) > getScaledFarmPacket(15, 4, false));
+  assert.equal(getScaledFarmDividend(22, 1, false), 22);
+  assert.ok(getScaledFarmDividend(22, 4, false) <= 70, 'Farm Lv.4 dividend must stay balanced');
 
   assert.equal(getScaledChainCount(3, 1), 3);
   assert.equal(getScaledChainCount(3, 4), 6);
@@ -71,18 +80,20 @@ test('Armor reduction & Railgun 100% Armor Pierce against Cyber Bosses', () => {
   assert.equal(calculateFinalDamage(32, 18, true), 32); // 100% pierce
 });
 
-test('Balanced 15-Wave HP scaling, Upgrade costs, and 75% Sell refund', () => {
-  assert.equal(calculateEnemyWaveHp(58, 1), 58);
-  assert.ok(calculateEnemyWaveHp(58, 5) < 100, 'Wave 5 Bit-Crawler should stay fair & accessible');
-  assert.equal(calculateEnemyWaveHp(3200, 15, true), 3200);
+test('Balanced tighter economy: starting gold, 15-Wave HP curve, Upgrade costs, and 70% Sell refund', () => {
+  assert.equal(STARTING_GOLD, 240);
+  assert.equal(OVERCLOCK_PAD_UNLOCK_COST, 120);
+  assert.equal(calculateEnemyWaveHp(68, 1), 68);
+  assert.ok(calculateEnemyWaveHp(68, 5) > 95 && calculateEnemyWaveHp(68, 5) < 120);
+  assert.equal(calculateEnemyWaveHp(4200, 15, true), 4200);
 
-  assert.equal(calculateUpgradeCost(100, 1), 95);
-  assert.equal(calculateUpgradeCost(100, 3), 245);
+  assert.equal(calculateUpgradeCost(100, 1), 105);
+  assert.equal(calculateUpgradeCost(100, 3), 270);
   assert.equal(calculateUpgradeCost(100, 4), 0);
 
-  assert.equal(calculateSellRefund(200), 150);
+  assert.equal(calculateSellRefund(200), 140);
   assert.equal(calculateSellRefund(-10), 0);
-  assert.equal(getWaveClearBonus(1), 93);
+  assert.equal(getWaveClearBonus(1), 54);
 });
 
 test('15-Wave 3-Stage + Final Stage Boss Campaign and 6 Cyber Towers with Ultimates', () => {
@@ -116,7 +127,7 @@ test('Expanded Nur Map: Longer 3-loop Bezier path (~70-95m) connects BaseMusuh t
   assert.ok(Math.abs(end.pos.x - 15.5) < 0.05);
 });
 
-test('Expanded Nur Map: 9 Overclock Pads snap cleanly and Free Placement validates road/tower/bounds', () => {
+test('Purchasable Overclock Pads block placement while locked, and allow snapping once bought', () => {
   assert.equal(NUR_TOWER_SLOTS.length, 9);
   const expectedDist = NUR_NEON_HALF_WIDTH + NUR_SLOT_PAD_SIZE * 0.5 + NUR_SLOT_CLEARANCE;
   for (const slot of NUR_TOWER_SLOTS) {
@@ -129,26 +140,32 @@ test('Expanded Nur Map: 9 Overclock Pads snap cleanly and Free Placement validat
 
   // Free placement right on the road centerline must be rejected
   const roadSample = NUR_BAKED_PATH.sampleAtDistance(NUR_BAKED_PATH.totalLength * 0.5).pos;
-  const onRoad = validateTowerPlacement(roadSample, []);
+  const onRoad = validateTowerPlacement(roadSample, [], new Set());
   assert.equal(onRoad.valid, false);
   assert.equal(onRoad.reason, 'on_road');
 
-  // Free placement on open deck away from road must be valid!
+  // Free placement on open deck away from road must be valid even with 0 unlocked pads
   const openSpot = { x: -14.0, y: 0, z: -8.0 };
-  const freeOk = validateTowerPlacement(openSpot, []);
+  const freeOk = validateTowerPlacement(openSpot, [], new Set());
   assert.equal(freeOk.valid, true);
   assert.equal(freeOk.overclockPadId, null);
 
   // Placing another tower on top of an existing tower must be rejected
-  const overlap = validateTowerPlacement({ x: -13.6, y: 0, z: -8.0 }, [openSpot]);
+  const overlap = validateTowerPlacement({ x: -13.6, y: 0, z: -8.0 }, [openSpot], new Set());
   assert.equal(overlap.valid, false);
   assert.equal(overlap.reason, 'tower_overlap');
 
-  // Placing near Overclock Pad 0 snaps cleanly and flags overclockPadId = 0
-  const nearPad = { x: NUR_TOWER_SLOTS[0].position.x + 0.25, y: 0, z: NUR_TOWER_SLOTS[0].position.z - 0.15 };
-  const ocResult = validateTowerPlacement(nearPad, []);
-  assert.equal(ocResult.valid, true);
-  assert.equal(ocResult.overclockPadId, 0);
+  // Placing on Overclock Pad 0 BEFORE purchasing must be REJECTED as locked_overclock_pad!
+  const nearPad = { x: NUR_TOWER_SLOTS[0].position.x + 0.2, y: 0, z: NUR_TOWER_SLOTS[0].position.z - 0.1 };
+  const lockedRes = validateTowerPlacement(nearPad, [], new Set());
+  assert.equal(lockedRes.valid, false);
+  assert.equal(lockedRes.reason, 'locked_overclock_pad');
+  assert.equal(lockedRes.overclockPadId, 0);
+
+  // Once Pad 0 is purchased/unlocked, placement snaps cleanly and activates overclockPadId = 0!
+  const unlockedRes = validateTowerPlacement(nearPad, [], new Set([0]));
+  assert.equal(unlockedRes.valid, true);
+  assert.equal(unlockedRes.overclockPadId, 0);
 });
 
 test('TargetSelector: BTD6 modes FIRST, STRONG, LAST, and CLOSE select exact candidates', () => {
@@ -164,4 +181,43 @@ test('TargetSelector: BTD6 modes FIRST, STRONG, LAST, and CLOSE select exact can
   assert.equal(selectTarget(towerPos, 6, candidates, 'STRONG')?.id, 2);
   assert.equal(selectTarget(towerPos, 6, candidates, 'LAST')?.id, 1);
   assert.equal(selectTarget(towerPos, 6, candidates, 'CLOSE')?.id, 1);
+});
+
+test('3 Difficulty modes (Mudah, Sedang, Sulit) scale HP, speed, costs, rewards, and Overclock cleanly', async () => {
+  const { DIFFICULTY_PRESETS, DIFFICULTY_ORDER } = await import('./constants');
+  const { getDifficultyTowerCost, getDifficultyRewardGold, getEnemySpeedMps } = await import('./combatMath');
+
+  assert.deepEqual(DIFFICULTY_ORDER, ['easy', 'normal', 'hard']);
+  const easy = DIFFICULTY_PRESETS.easy;
+  const normal = DIFFICULTY_PRESETS.normal;
+  const hard = DIFFICULTY_PRESETS.hard;
+
+  // Starting resources descend Easy -> Normal -> Hard
+  assert.ok(easy.startingGold > normal.startingGold && normal.startingGold > hard.startingGold);
+  assert.ok(easy.startingCoreHp > normal.startingCoreHp && normal.startingCoreHp > hard.startingCoreHp);
+  assert.ok(easy.overclockUnlockCost < normal.overclockUnlockCost && normal.overclockUnlockCost < hard.overclockUnlockCost);
+
+  // Enemy HP & Speed ascend Easy -> Normal -> Hard
+  assert.ok(
+    calculateEnemyWaveHp(100, 5, false, 'easy') < calculateEnemyWaveHp(100, 5, false, 'normal') &&
+      calculateEnemyWaveHp(100, 5, false, 'normal') < calculateEnemyWaveHp(100, 5, false, 'hard')
+  );
+  assert.ok(
+    getEnemySpeedMps(80, 'easy') < getEnemySpeedMps(80, 'normal') &&
+      getEnemySpeedMps(80, 'normal') < getEnemySpeedMps(80, 'hard')
+  );
+
+  // Tower purchase & upgrade costs ascend Easy -> Normal -> Hard; rewards descend
+  assert.ok(
+    getDifficultyTowerCost(100, 'easy') < getDifficultyTowerCost(100, 'normal') &&
+      getDifficultyTowerCost(100, 'normal') < getDifficultyTowerCost(100, 'hard')
+  );
+  assert.ok(
+    calculateUpgradeCost(100, 2, 'easy') < calculateUpgradeCost(100, 2, 'normal') &&
+      calculateUpgradeCost(100, 2, 'normal') < calculateUpgradeCost(100, 2, 'hard')
+  );
+  assert.ok(
+    getDifficultyRewardGold(20, 'easy') > getDifficultyRewardGold(20, 'normal') &&
+      getDifficultyRewardGold(20, 'normal') > getDifficultyRewardGold(20, 'hard')
+  );
 });
