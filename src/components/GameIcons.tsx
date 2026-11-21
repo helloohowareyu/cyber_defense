@@ -129,22 +129,22 @@ export function TowerSilhouetteIcon({
       <svg viewBox="0 0 40 40" fill="none" className={className} aria-hidden="true">
         <defs>
           <linearGradient id="rg-rail" x1="14" y1="5" x2="26" y2="25" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#fda4af" />
-            <stop offset="50%" stopColor="#e11d48" />
-            <stop offset="100%" stopColor="#4c0519" />
+            <stop offset="0%" stopColor="#ddd6fe" />
+            <stop offset="50%" stopColor="#8b5cf6" />
+            <stop offset="100%" stopColor="#3b0764" />
           </linearGradient>
         </defs>
         {/* Precision tripod mount */}
-        <path d="M8 33L13 26H27L32 33H8Z" fill="#1e1b2e" stroke="#64748b" strokeWidth="1" />
+        <path d="M8 33L13 26H27L32 33H8Z" fill="#1d1138" stroke="#64748b" strokeWidth="1" />
         <rect x="14" y="21" width="12" height="7" rx="1.5" fill="#334155" />
         {/* Twin electromagnetic accelerator rails */}
         <rect x="14.5" y="5" width="3.6" height="19" rx="1" fill="url(#rg-rail)" />
         <rect x="21.9" y="5" width="3.6" height="19" rx="1" fill="url(#rg-rail)" />
         {/* Accelerator magnetic bridges */}
-        <rect x="13" y="9" width="14" height="2.2" rx="0.8" fill="#fecdd3" />
-        <rect x="13" y="15" width="14" height="2.2" rx="0.8" fill="#fb7185" />
+        <rect x="13" y="9" width="14" height="2.2" rx="0.8" fill="#ede9fe" />
+        <rect x="13" y="15" width="14" height="2.2" rx="0.8" fill="#a78bfa" />
         {/* Charged core slug */}
-        <rect x="19" y="7" width="2" height="14" rx="1" fill="#fff1f2" />
+        <rect x="19" y="7" width="2" height="14" rx="1" fill="#f5f3ff" />
       </svg>
     );
   }
@@ -154,23 +154,23 @@ export function TowerSilhouetteIcon({
       <svg viewBox="0 0 40 40" fill="none" className={className} aria-hidden="true">
         <defs>
           <radialGradient id="ts-orb" cx="0.4" cy="0.35" r="0.65">
-            <stop offset="0%" stopColor="#f5d0fe" />
-            <stop offset="55%" stopColor="#a855f7" />
-            <stop offset="100%" stopColor="#4c1d95" />
+            <stop offset="0%" stopColor="#fdf2f8" />
+            <stop offset="55%" stopColor="#f472b6" />
+            <stop offset="100%" stopColor="#831843" />
           </radialGradient>
         </defs>
         {/* High-voltage insulator base */}
-        <path d="M9 33L13 27H27L31 33H9Z" fill="#1e1633" stroke="#a855f7" strokeOpacity="0.55" strokeWidth="1" />
+        <path d="M9 33L13 27H27L31 33H9Z" fill="#2a0f1f" stroke="#f472b6" strokeOpacity="0.65" strokeWidth="1" />
         {/* Copper/steel transformer column */}
         <rect x="17.5" y="13" width="5" height="15" rx="1.5" fill="#475569" />
         {/* Stacked induction torus coils */}
-        <ellipse cx="20" cy="23.5" rx="8.5" ry="2.2" fill="#3b0764" stroke="#d8b4fe" strokeWidth="1.2" />
-        <ellipse cx="20" cy="18.5" rx="6.8" ry="1.9" fill="#581c87" stroke="#e9d5ff" strokeWidth="1.2" />
+        <ellipse cx="20" cy="23.5" rx="8.5" ry="2.2" fill="#500724" stroke="#f9a8d4" strokeWidth="1.2" />
+        <ellipse cx="20" cy="18.5" rx="6.8" ry="1.9" fill="#831843" stroke="#fbcfe8" strokeWidth="1.2" />
         {/* Top discharge sphere */}
         <circle cx="20" cy="10.5" r="5" fill="url(#ts-orb)" />
         {/* Crisp discharge arcs */}
-        <path d="M12.5 11.5L8 9L10.5 14" stroke="#e9d5ff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M27.5 11.5L32 9L29.5 14" stroke="#e9d5ff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M12.5 11.5L8 9L10.5 14" stroke="#fbcfe8" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M27.5 11.5L32 9L29.5 14" stroke="#fbcfe8" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     );
   }

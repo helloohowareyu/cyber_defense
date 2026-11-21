@@ -1313,8 +1313,8 @@ export class CyberDefenseEngine {
       let prevPos = tower.position.clone().add(new THREE.Vector3(0, 1.5, 0));
       for (const e of struck) {
         const targetPos = e.position.clone().add(new THREE.Vector3(0, 0.7, 0));
-        this.spawnBeamSegment(prevPos, targetPos, 0xc084fc, 0.11, 0.36);
-        this.spawnParticles(targetPos, 10, 0xc084fc, 4.0, 0.4);
+        this.spawnBeamSegment(prevPos, targetPos, 0xf472b6, 0.11, 0.36);
+        this.spawnParticles(targetPos, 10, 0xf472b6, 4.0, 0.4);
         this.damageEnemy(e, 185, false, tower.id);
         prevPos = targetPos;
       }
@@ -2194,7 +2194,7 @@ export class CyberDefenseEngine {
 
       const target = selectTarget(tower.position, rangeMeters, this.enemies, tower.targetingMode);
       if (target) {
-        if (tower.type !== 'tesla' && tower.type !== 'freeze') {
+        if (tower.type !== 'tesla') {
           const desiredYaw = computeTurretYaw(tower.position, target.position);
           let diff = desiredYaw - tower.rig.turretHead.rotation.y;
           while (diff > Math.PI) diff -= Math.PI * 2;
