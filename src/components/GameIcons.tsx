@@ -62,11 +62,11 @@ export function TowerSilhouetteIcon({
   if (type === 'tesla') {
     return (
       <svg viewBox="0 0 28 28" fill="none" className={className} aria-hidden="true">
-        <path d="M8 23h12l-2-4H10l-2 4z" fill="#1d1138" stroke="#c084fc" strokeWidth="1.4" />
-        <line x1="14" y1="9" x2="14" y2="19" stroke="#a855f7" strokeWidth="2.4" />
-        <ellipse cx="14" cy="13.5" rx="5.5" ry="1.6" stroke="#d8b4fe" strokeWidth="1.3" />
-        <circle cx="14" cy="7" r="3" fill="#c084fc" stroke="#f3e8ff" strokeWidth="1.2" />
-        <path d="M5 9l4-2M23 9l-4-2" stroke="#e9d5ff" strokeWidth="1.4" strokeLinecap="round" />
+        <path d="M8 23h12l-2-4H10l-2 4z" fill="#2a0f1f" stroke="#f472b6" strokeWidth="1.4" />
+        <line x1="14" y1="9" x2="14" y2="19" stroke="#ec4899" strokeWidth="2.4" />
+        <ellipse cx="14" cy="13.5" rx="5.5" ry="1.6" stroke="#fbcfe8" strokeWidth="1.3" />
+        <circle cx="14" cy="7" r="3" fill="#f472b6" stroke="#fdf2f8" strokeWidth="1.2" />
+        <path d="M5 9l4-2M23 9l-4-2" stroke="#fce7f3" strokeWidth="1.4" strokeLinecap="round" />
       </svg>
     );
   }
@@ -82,11 +82,11 @@ export function TowerSilhouetteIcon({
   }
   return (
     <svg viewBox="0 0 28 28" fill="none" className={className} aria-hidden="true">
-      <path d="M7 23h14l-1.5-5h-11L7 23z" fill="#26101c" stroke="#f43f5e" strokeWidth="1.4" />
-      <rect x="10.5" y="4" width="2.5" height="14" fill="#f43f5e" />
-      <rect x="15" y="4" width="2.5" height="14" fill="#f43f5e" />
-      <line x1="9" y1="9" x2="19" y2="9" stroke="#fecdd3" strokeWidth="1.5" />
-      <line x1="9" y1="13" x2="19" y2="13" stroke="#fecdd3" strokeWidth="1.5" />
+      <path d="M7 23h14l-1.5-5h-11L7 23z" fill="#1d1138" stroke="#8b5cf6" strokeWidth="1.4" />
+      <rect x="10.5" y="4" width="2.5" height="14" fill="#8b5cf6" />
+      <rect x="15" y="4" width="2.5" height="14" fill="#8b5cf6" />
+      <line x1="9" y1="9" x2="19" y2="9" stroke="#ddd6fe" strokeWidth="1.5" />
+      <line x1="9" y1="13" x2="19" y2="13" stroke="#ddd6fe" strokeWidth="1.5" />
     </svg>
   );
 }
